@@ -60,9 +60,9 @@ afterEvaluate {
         publications {
             release(MavenPublication) {
                 from components.release
-                groupId = 'com.github.ramch' // Will be overridden by JitPack usually, but good practice
+                groupId = 'com.github.nameispawankalyan.Suguna-Call-SDK'
                 artifactId = 'suguna-rtc'
-                version = '1.0.0'
+                version = "1.0"
             }
         }
     }

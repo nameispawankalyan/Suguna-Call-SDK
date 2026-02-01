@@ -42,7 +42,8 @@ app.post('/generateRtcToken', (req, res) => {
     res.json({ rtcToken, appId: APP_ID, expiresIn: 86400 });
 });
 
-// --- Socket.io Authentication Middleware ---
+// --- Socket.io Authentication Middleware DISABLED FOR TESTING ---
+/*
 io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     const roomId = socket.handshake.query.roomId;
@@ -63,6 +64,19 @@ io.use((socket, next) => {
         next();
     });
 });
+*/
+
+// Mock middleware to set decoded data from query params for testing
+io.use((socket, next) => {
+    const userId = socket.handshake.query.userId;
+    const roomId = socket.handshake.query.roomId || "default_room";
+    if (userId) {
+        socket.decoded = { userId, roomId };
+        next();
+    } else {
+        next(new Error("User ID missing"));
+    }
+});
 
 // Store active users: userId -> socketId
 const connectedUsers = {};
@@ -77,24 +91,24 @@ io.on('connection', (socket) => {
     // --- 1. WhatsApp-like Direct Calling ---
 
     socket.on('call-user', ({ userToCall, signalData, fromUserId }) => {
-         const socketIdToCall = connectedUsers[userToCall];
-         if (socketIdToCall) {
-             io.to(socketIdToCall).emit("call-made", { signal: signalData, from: fromUserId });
-             console.log(`Call forwarded from ${fromUserId} to ${userToCall}`);
-         } else {
-             console.log(`User ${userToCall} is offline or not found.`);
-             // Optional: Emit 'user-offline' back to caller
-         }
+        const socketIdToCall = connectedUsers[userToCall];
+        if (socketIdToCall) {
+            io.to(socketIdToCall).emit("call-made", { signal: signalData, from: fromUserId });
+            console.log(`Call forwarded from ${fromUserId} to ${userToCall}`);
+        } else {
+            console.log(`User ${userToCall} is offline or not found.`);
+            // Optional: Emit 'user-offline' back to caller
+        }
     });
 
     socket.on('accept-call', ({ signal, to }) => {
-         const socketIdToCall = connectedUsers[to];
-         io.to(socketIdToCall).emit("call-accepted", signal);
+        const socketIdToCall = connectedUsers[to];
+        io.to(socketIdToCall).emit("call-accepted", signal);
     });
 
     socket.on('reject-call', ({ to }) => {
-         const socketIdToCall = connectedUsers[to];
-         io.to(socketIdToCall).emit("call-rejected");
+        const socketIdToCall = connectedUsers[to];
+        io.to(socketIdToCall).emit("call-rejected");
     });
 
     // --- 2. Existing Room Logic ---
