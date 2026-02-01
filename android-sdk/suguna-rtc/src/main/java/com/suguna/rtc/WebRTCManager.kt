@@ -11,7 +11,6 @@ class WebRTCManager(
 ) {
     private var peerConnectionFactory: PeerConnectionFactory
     private val peerConnections = mutableMapOf<String, PeerConnection>()
-    private var localStream: VideoTrack? = null
 
     interface Events {
         fun onRemoteStream(userId: String, videoTrack: VideoTrack)
@@ -29,6 +28,46 @@ class WebRTCManager(
             .createPeerConnectionFactory()
 
         setupSignaling()
+    }
+    private fun createPeerConnection(userId: String): PeerConnection {
+        val iceServers = listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+        )
+        val rtcConfig = PeerConnection.RTCConfiguration(iceServers)
+
+        val pc = peerConnectionFactory.createPeerConnection(rtcConfig, object : PeerConnection.Observer {
+            override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
+            override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
+            override fun onIceConnectionReceivingChange(p0: Boolean) {}
+            override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
+            override fun onIceCandidate(p0: IceCandidate?) {
+                p0?.let {
+                    val candidate = JSONObject()
+                    candidate.put("sdpMid", it.sdpMid)
+                    candidate.put("sdpMLineIndex", it.sdpMLineIndex)
+                    candidate.put("candidate", it.sdp)
+                    signalingClient.sendIceCandidate(userId, candidate)
+                }
+            }
+            override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
+            override fun onAddStream(p0: MediaStream?) {
+                p0?.videoTracks?.firstOrNull()?.let {
+                    events.onRemoteStream(userId, it)
+                }
+            }
+            override fun onRemoveStream(p0: MediaStream?) {}
+            override fun onDataChannel(p0: DataChannel?) {}
+            override fun onRenegotiationNeeded() {}
+            override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
+        })
+
+        if (pc != null) {
+            localVideoTrack?.let { pc.addTrack(it, listOf("ARDAMS")) }
+            localAudioTrack?.let { pc.addTrack(it, listOf("ARDAMS")) }
+            peerConnections[userId] = pc
+        }
+
+        return pc!!
     }
 
     private fun setupSignaling() {
@@ -172,7 +211,7 @@ class WebRTCManager(
     }
 
     open class SimpleSdpObserver : SdpObserver {
-        override fun onCreateSuccess(p0: SessionDescription?) {}
+        override fun onCreateSuccess(p0: SessionDescription) {}
         override fun onSetSuccess() {}
         override fun onCreateFailure(p0: String?) {}
         override fun onSetFailure(p0: String?) {}
