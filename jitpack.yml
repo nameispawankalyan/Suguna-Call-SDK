@@ -1,11 +1,8 @@
 jdk:
   - openjdk17
 before_install:
-  - wget https://services.gradle.org/distributions/gradle-8.2-bin.zip
-  - unzip gradle-8.2-bin.zip
-  - export GRADLE_HOME=$PWD/gradle-8.2
-  - export PATH=$GRADLE_HOME/bin:$PATH
-  - gradle -v
-  - gradle -p android-sdk clean
+  - cd android-sdk
+  - chmod +x gradlew
+  - ./gradlew clean
 install:
-  - gradle -p android-sdk :suguna-rtc:assembleRelease :suguna-rtc:publishToMavenLocal
+  - ./gradlew :suguna-rtc:assembleRelease :suguna-rtc:publishToMavenLocal
