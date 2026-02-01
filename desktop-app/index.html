@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suguna Desktop - Professional RTC</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --secondary: #a855f7;
+            --bg: #0f172a;
+            --sidebar: #1e293b;
+            --text: #f8fafc;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Drag area for the custom title bar */
+        .title-bar-drag {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 40px;
+            -webkit-app-region: drag;
+            z-index: 1000;
+        }
+
+        .sidebar {
+            width: 80px;
+            background: var(--sidebar);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 60px 0 20px 0;
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .nav-item {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .nav-item:hover {
+            background: var(--primary);
+            transform: scale(1.1);
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 60px 40px 40px 40px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .video-container {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 24px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        #mainVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .remote-strips {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 15px;
+        }
+
+        .mini-video {
+            width: 200px;
+            aspect-ratio: 16/9;
+            background: #1e293b;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid var(--primary);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+        }
+
+        .mini-video video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .call-controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 15px 30px;
+            border-radius: 50px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .ctrl-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .mic-btn {
+            background: #334155;
+        }
+
+        .cam-btn {
+            background: #334155;
+        }
+
+        .end-btn {
+            background: #ef4444;
+        }
+
+        .end-btn:hover {
+            background: #dc2626;
+            transform: scale(1.1);
+        }
+
+        .ctrl-btn:not(.end-btn):hover {
+            background: #475569;
+        }
+
+        .setup-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .setup-card {
+            background: var(--sidebar);
+            padding: 40px;
+            border-radius: 24px;
+            width: 400px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 20px 0;
+            background: #0f172a;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            border-radius: 8px;
+            outline: none;
+        }
+
+        .join-btn {
+            width: 100%;
+            padding: 12px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="title-bar-drag"></div>
+
+    <div class="sidebar">
+        <div class="nav-item">🏠</div>
+        <div class="nav-item">📱</div>
+        <div class="nav-item">⚙️</div>
+    </div>
+
+    <div class="main-content">
+        <header>
+            <div>
+                <h2 id="roomDisplay">Not Connected</h2>
+                <p style="color: #94a3b8; font-size: 0.8rem;">Suguna SDK Desktop v1.0</p>
+            </div>
+            <div id="statusBadge"
+                style="padding: 4px 12px; background: #334155; border-radius: 20px; font-size: 0.8rem;">Disconnected
+            </div>
+        </header>
+
+        <div class="video-container">
+            <video id="mainVideo" autoplay playsinline></video>
+
+            <div class="remote-strips" id="remoteStrips">
+                <div class="mini-video" id="localContainer">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                </div>
+            </div>
+
+            <div class="call-controls" id="controls" style="display: none;">
+                <button class="ctrl-btn mic-btn">🎤</button>
+                <button class="ctrl-btn cam-btn">📹</button>
+                <button class="ctrl-btn end-btn" id="leaveBtn">📞</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="setup-overlay" id="setupOverlay">
+        <div class="setup-card">
+            <h1 style="margin-bottom: 10px;">Suguna Desktop</h1>
+            <p style="color: #94a3b8;">Enter a room to join the high-def call</p>
+            <input type="text" id="roomId" placeholder="Room ID" value="desktop-demo">
+            <button class="join-btn" id="joinBtn">Join Meeting</button>
+        </div>
+    </div>
+
+    <!-- SDK Reference -->
+    <script src="../web-sdk/suguna-sdk.js"></script>
+    <script>
+        const client = new SugunaClient({
+            serverUrl: 'http://localhost:5000'
+        });
+
+        const setupOverlay = document.getElementById('setupOverlay');
+        const joinBtn = document.getElementById('joinBtn');
+        const leaveBtn = document.getElementById('leaveBtn');
+        const roomIdInput = document.getElementById('roomId');
+        const localVideo = document.getElementById('localVideo');
+        const statusBadge = document.getElementById('statusBadge');
+        const roomDisplay = document.getElementById('roomDisplay');
+        const controls = document.getElementById('controls');
+
+        joinBtn.onclick = async () => {
+            const roomId = roomIdInput.value;
+            if (!roomId) return;
+
+            try {
+                await client.initialize();
+                const stream = await client.startLocalStream();
+                localVideo.srcObject = stream;
+
+                client.joinRoom(roomId);
+
+                setupOverlay.style.display = 'none';
+                controls.style.display = 'flex';
+                statusBadge.innerText = 'Live';
+                statusBadge.style.background = '#059669';
+                roomDisplay.innerText = 'Room: ' + roomId;
+            } catch (e) {
+                alert('Connection Error: ' + e.message);
+            }
+        };
+
+        leaveBtn.onclick = () => {
+            client.leaveRoom();
+            window.location.reload();
+        };
+
+        client.on('remote-stream-added', (data) => {
+            const mainVideo = document.getElementById('mainVideo');
+            mainVideo.srcObject = data.stream;
+        });
+    </script>
+</body>
+
+</html>
