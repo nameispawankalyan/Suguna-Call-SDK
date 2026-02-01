@@ -1,0 +1,6 @@
+jdk:
+  - openjdk17
+before_install:
+  - ./android-sdk/gradlew -p android-sdk clean
+install:
+  - ./android-sdk/gradlew -p android-sdk :suguna-rtc:assembleRelease :suguna-rtc:publishToMavenLocal
