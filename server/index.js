@@ -70,8 +70,9 @@ io.use((socket, next) => {
 io.use((socket, next) => {
     const userId = socket.handshake.query.userId;
     const roomId = socket.handshake.query.roomId || "default_room";
+    const role = socket.handshake.query.role || "host"; // Default to host
     if (userId) {
-        socket.decoded = { userId, roomId };
+        socket.decoded = { userId, roomId, role };
         next();
     } else {
         next(new Error("User ID missing"));
@@ -82,8 +83,8 @@ io.use((socket, next) => {
 const connectedUsers = {};
 
 io.on('connection', (socket) => {
-    const { roomId, userId } = socket.decoded;
-    console.log(`Verified User Connected: ${userId}`);
+    const { roomId, userId, role } = socket.decoded;
+    console.log(`Verified User Connected: ${userId} (${role})`);
 
     // Register user
     connectedUsers[userId] = socket.id;
@@ -115,7 +116,8 @@ io.on('connection', (socket) => {
 
     socket.on('join-room', () => {
         socket.join(roomId);
-        socket.to(roomId).emit('user-joined', userId);
+        // Broadcast user joined with ROLE info
+        socket.to(roomId).emit('user-joined', { userId, role });
     });
 
     socket.on('disconnect', () => {

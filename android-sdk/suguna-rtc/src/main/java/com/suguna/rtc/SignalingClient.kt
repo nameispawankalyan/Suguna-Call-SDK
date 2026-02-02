@@ -8,13 +8,14 @@ import org.json.JSONObject
 class SignalingClient(
     private val serverUrl: String,
     private var currentRoom: String,
-    private val rtcToken: String
+    private val rtcToken: String,
+    private val role: String
 ) {
     private var socket: Socket? = null
     private val userId = "android_" + (0..1000).random()
 
     interface Callback {
-        fun onUserJoined(userId: String)
+        fun onUserJoined(userId: String, role: String)
         fun onOfferReceived(fromUserId: String, offer: JSONObject)
         fun onAnswerReceived(fromUserId: String, answer: JSONObject)
         fun onIceCandidateReceived(fromUserId: String, candidate: JSONObject)
@@ -27,7 +28,7 @@ class SignalingClient(
         try {
             val options = IO.Options.builder()
                 .setAuth(mutableMapOf("token" to rtcToken))
-                .setQuery("roomId=$currentRoom")
+                .setQuery("roomId=$currentRoom&role=$role")
                 .build()
 
             socket = IO.socket(serverUrl, options)
@@ -36,8 +37,10 @@ class SignalingClient(
             }
 
             socket?.on("user-joined") { args ->
-                val joinedUserId = args[0] as String
-                callback?.onUserJoined(joinedUserId)
+                val data = args[0] as JSONObject
+                val joinedUserId = data.getString("userId")
+                val joinedUserRole = data.optString("role", "host")
+                callback?.onUserJoined(joinedUserId, joinedUserRole)
             }
 
             socket?.on("offer") { args ->

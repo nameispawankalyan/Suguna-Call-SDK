@@ -7,7 +7,8 @@ import org.webrtc.*
 class WebRTCManager(
     private val context: Context,
     private val signalingClient: SignalingClient,
-    private val events: Events
+    private val events: Events,
+    private val myRole: String
 ) {
     private var peerConnectionFactory: PeerConnectionFactory
     private val peerConnections = mutableMapOf<String, PeerConnection>()
@@ -72,7 +73,12 @@ class WebRTCManager(
 
     private fun setupSignaling() {
         signalingClient.callback = object : SignalingClient.Callback {
-            override fun onUserJoined(userId: String) {
+            override fun onUserJoined(userId: String, role: String) {
+                // Optimization: Audience members should not connect to each other for scaling
+                if (myRole == "audience" && role == "audience") {
+                    return
+                }
+
                 createPeerConnection(userId).createOffer(object : SimpleSdpObserver() {
                     override fun onCreateSuccess(sdp: SessionDescription) {
                         peerConnections[userId]?.setLocalDescription(SimpleSdpObserver(), sdp)

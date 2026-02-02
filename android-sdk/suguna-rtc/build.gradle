@@ -42,13 +42,9 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     
-    // WebRTC (Use GetStream stable version)
-    api 'io.getstream:stream-webrtc-android:1.1.1'
-    
-    // Socket.io for Signaling
-    implementation ('io.socket:socket.io-client:2.1.0') {
-        exclude group: 'org.json', module: 'json'
-    }
+    // LiveKit SDK (Handles WebRTC & Signaling)
+    api 'io.livekit:livekit-android:2.8.3'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
 
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
