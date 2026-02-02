@@ -5,8 +5,10 @@ import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.participant.LocalParticipant
 import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.participant.RemoteParticipant
+import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CoroutineScope
@@ -67,7 +69,7 @@ class SugunaClient(
                 kotlinx.coroutines.delay(1000)
 
                 // Try to find the local video track
-                room?.localParticipant?.videoTrackPublications?.firstOrNull()?.videoTrack?.let { videoTrack ->
+                room?.localParticipant?.videoTrackPublications?.firstOrNull()?.track?.let { videoTrack ->
                     eventListener?.onLocalStreamReady(videoTrack as Any)
                 }
 
