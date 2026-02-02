@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class SugunaClient(private val context: Context, private val serverUrl: String) {
 
@@ -59,12 +60,14 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                 room?.localParticipant?.setCameraEnabled(true)
                 room?.localParticipant?.setMicrophoneEnabled(true)
 
-                // Wait for publishing
-                kotlinx.coroutines.delay(1500)
+                // Wait for publishing to finish
+                delay(2000)
 
-                // Get local video track
-                val localVideoTrack = room?.localParticipant?.videoTracks?.firstOrNull()?.first
-                localVideoTrack?.let {
+                // Correct way to get local video track in LiveKit 2.x
+                val publications = room?.localParticipant?.videoTrackPublications
+                val videoTrack = publications?.firstOrNull()?.track
+                
+                videoTrack?.let {
                     eventListener?.onLocalStreamReady(it as Any)
                 }
 

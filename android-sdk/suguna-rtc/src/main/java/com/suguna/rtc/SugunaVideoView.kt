@@ -15,7 +15,8 @@ class SugunaVideoView : TextureViewRenderer {
     private fun initRenderer() {
         try {
             val eglBase = EglBase.create()
-            init(eglBase.eglContext, null)
+            // We use eglBaseContext which is standard in WebRTC
+            init(eglBase.eglBaseContext, null)
         } catch (e: Exception) {
             // Already initialized
         }
