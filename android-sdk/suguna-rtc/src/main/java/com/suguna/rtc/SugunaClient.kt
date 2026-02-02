@@ -13,31 +13,20 @@ import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/**
- * SugunaClient - Powered by LiveKit
- * Unified Architecture for 1-vs-1 and Live Streaming
- */
-class SugunaClient(
-    private val context: Context,
-    private val serverUrl: String 
-) {
-    private var room: Room? = null
-    private val scope = CoroutineScope(Dispatchers.Main)
+class SugunaClient(private val context: Context, private val serverUrl: String) {
 
-    interface SugunaEvents {
-        fun onLocalStreamReady(videoTrack: Any)
-        // Pass userId as nullable to avoid crashes if identity is missing
-        fun onRemoteStreamReady(userId: String?, videoTrack: Any)
-        fun onUserLeft(userId: String?)
-        fun onError(message: String)
-    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var room: Room? = null
+    private var eventListener: SugunaEvents? = null
 
     companion object {
         const val ROLE_HOST = "host"
         const val ROLE_AUDIENCE = "audience"
-        
+
+        @JvmStatic
         fun attachTrackToView(track: Any, view: SugunaVideoView) {
             if (track is VideoTrack) {
                 track.addRenderer(view)
@@ -45,7 +34,12 @@ class SugunaClient(
         }
     }
 
-    private var eventListener: SugunaEvents? = null
+    interface SugunaEvents {
+        fun onLocalStreamReady(videoTrack: Any)
+        fun onRemoteStreamReady(userId: String?, videoTrack: Any)
+        fun onUserLeft(userId: String?)
+        fun onError(message: String)
+    }
 
     fun setEventListener(listener: SugunaEvents) {
         this.eventListener = listener
@@ -65,12 +59,13 @@ class SugunaClient(
                 room?.localParticipant?.setCameraEnabled(true)
                 room?.localParticipant?.setMicrophoneEnabled(true)
 
-                // Wait a bit for track to be ready
-                kotlinx.coroutines.delay(1000)
+                // Wait for publishing
+                kotlinx.coroutines.delay(1500)
 
-                // Try to find the local video track
-                room?.localParticipant?.videoTrackPublications?.firstOrNull()?.track?.let { videoTrack ->
-                    eventListener?.onLocalStreamReady(videoTrack as Any)
+                // Get local video track
+                val localVideoTrack = room?.localParticipant?.videoTracks?.firstOrNull()?.first
+                localVideoTrack?.let {
+                    eventListener?.onLocalStreamReady(it as Any)
                 }
 
             } catch (e: Exception) {
@@ -85,18 +80,12 @@ class SugunaClient(
                 when (event) {
                     is RoomEvent.TrackSubscribed -> {
                         val track = event.track
-                        val participant = event.participant
-                        
                         if (track is VideoTrack) {
-                            // Ensure identity is treated as String (it usually is 'Identity' type which acts as String)
-                            eventListener?.onRemoteStreamReady(participant.identity?.toString(), track)
+                            eventListener?.onRemoteStreamReady(event.participant.identity?.value, track as Any)
                         }
                     }
                     is RoomEvent.ParticipantDisconnected -> {
-                        eventListener?.onUserLeft(event.participant.identity?.toString())
-                    }
-                    is RoomEvent.Disconnected -> {
-                        eventListener?.onUserLeft("local_user")
+                        eventListener?.onUserLeft(event.participant.identity?.value)
                     }
                     else -> {}
                 }
@@ -104,47 +93,15 @@ class SugunaClient(
         }
     }
 
-    private fun startLocalStream() {
-        scope.launch {
-            // Suspend calls
-            room?.localParticipant?.setCameraEnabled(true)
-            room?.localParticipant?.setMicrophoneEnabled(true)
-
-            // Local Video Track logic:
-            // Usually setting camera enabled automatically publishes the track.
-            // We can listen for 'LocalTrackPublished' event if needed, but for now we assume auto-publish.
-            // If we need to show local preview, we can grab the track from room.localParticipant.videoTrackPublications
-        }
+    fun setMicrophoneEnabled(enabled: Boolean) {
+        scope.launch { room?.localParticipant?.setMicrophoneEnabled(enabled) }
     }
 
-    fun joinRoom() {
-        // No-op
+    fun setCameraEnabled(enabled: Boolean) {
+        scope.launch { room?.localParticipant?.setCameraEnabled(enabled) }
     }
 
     fun leaveRoom() {
-        scope.launch {
-            room?.disconnect()
-            room?.release()
-            room = null
-        }
-    }
-
-    fun switchCamera() {
-        scope.launch {
-             val track = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? io.livekit.android.room.track.LocalVideoTrack
-             track?.switchCamera()
-        }
-    }
-
-    fun muteLocalAudio(muted: Boolean) {
-        scope.launch {
-            room?.localParticipant?.setMicrophoneEnabled(!muted)
-        }
-    }
-
-    fun muteLocalVideo(muted: Boolean) {
-        scope.launch {
-            room?.localParticipant?.setCameraEnabled(!muted)
-        }
+        room?.disconnect()
     }
 }

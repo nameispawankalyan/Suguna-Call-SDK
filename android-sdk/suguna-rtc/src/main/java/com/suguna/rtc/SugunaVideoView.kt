@@ -1,3 +1,6 @@
+package com.suguna.rtc
+
+import android.content.Context
 import android.util.AttributeSet
 import io.livekit.android.renderer.TextureViewRenderer
 import org.webrtc.EglBase
@@ -7,14 +10,14 @@ import org.webrtc.EglBase
  */
 class SugunaVideoView : TextureViewRenderer {
     constructor(context: Context) : super(context) { initRenderer() }
-    constructor(context: Context, attrs: AttributeSet?) : super(context, attrs ?: throw IllegalArgumentException("Attrs null")) { initRenderer() }
+    constructor(context: Context, attrs: AttributeSet?) : super(context, attrs) { initRenderer() }
 
     private fun initRenderer() {
         try {
             val eglBase = EglBase.create()
             init(eglBase.eglContext, null)
         } catch (e: Exception) {
-            // Already initialized or failed
+            // Already initialized
         }
     }
 }
