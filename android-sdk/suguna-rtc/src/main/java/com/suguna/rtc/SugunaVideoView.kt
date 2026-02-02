@@ -3,22 +3,12 @@ package com.suguna.rtc
 import android.content.Context
 import android.util.AttributeSet
 import io.livekit.android.renderer.TextureViewRenderer
-import org.webrtc.EglBase
 
 /**
- * SugunaVideoView - A wrapper around the underlying video renderer.
+ * SugunaVideoView - A wrapper around LiveKit's TextureViewRenderer.
+ * LiveKit handles the initialization of this view when a track is added.
  */
-class SugunaVideoView : TextureViewRenderer {
-    constructor(context: Context) : super(context) { initRenderer() }
-    constructor(context: Context, attrs: AttributeSet?) : super(context, attrs) { initRenderer() }
-
-    private fun initRenderer() {
-        try {
-            val eglBase = EglBase.create()
-            // We use eglBaseContext which is standard in WebRTC
-            init(eglBase.eglBaseContext, null)
-        } catch (e: Exception) {
-            // Already initialized
-        }
-    }
-}
+class SugunaVideoView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : TextureViewRenderer(context, attrs)
