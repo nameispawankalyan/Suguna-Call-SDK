@@ -43,7 +43,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     
     // LiveKit SDK (Handles WebRTC & Signaling)
-    api 'io.livekit:livekit-android:2.8.3'
+    api 'io.livekit:livekit-android:2.7.4'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
 
     testImplementation 'junit:junit:4.13.2'
