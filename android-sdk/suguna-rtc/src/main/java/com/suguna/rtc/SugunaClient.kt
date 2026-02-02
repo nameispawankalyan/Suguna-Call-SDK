@@ -5,7 +5,6 @@ import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
-import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,35 +44,38 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     fun initialize(roomName: String, token: String, role: String) {
         scope.launch {
             try {
-                // Initialize Room
                 room = LiveKit.create(context)
                 setupRoomListeners()
-
-                // Connect
                 room?.connect(serverUrl, token)
                 
-                // For Host, enable camera and mic
                 if (role == ROLE_HOST) {
                     room?.localParticipant?.setCameraEnabled(true)
                     room?.localParticipant?.setMicrophoneEnabled(true)
 
-                    // Wait for the track to be published and ready
+                    // Give some time for publication
                     delay(2000)
 
-                    // Get the camera track publication
-                    val cameraPub = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)
-                    val videoTrack = cameraPub?.track
+                    // Find video track using a more resilient method
+                    val localParticipant = room?.localParticipant
+                    val videoPublication = localParticipant?.videoTrackPublications?.firstOrNull()
                     
-                    if (videoTrack != null) {
-                        eventListener?.onLocalStreamReady(videoTrack as Any)
+                    // Use reflection-like safe access or check both track/videoTrack
+                    // In LiveKit Android, LocalTrackPublication usually has 'track'
+                    val track = videoPublication?.javaClass?.getMethod("getTrack")?.invoke(videoPublication)
+                                ?: videoPublication?.javaClass?.getMethod("getVideoTrack")?.invoke(videoPublication)
+
+                    if (track != null) {
+                        eventListener?.onLocalStreamReady(track as Any)
                     } else {
-                        // Fallback: try first video track publication
-                        room?.localParticipant?.videoTrackPublications?.firstOrNull()?.track?.let {
-                            eventListener?.onLocalStreamReady(it as Any)
+                        // One last try: just find any VideoTrack in the participant's tracks
+                        localParticipant?.videoTrackPublications?.forEach { pub ->
+                            pub.track?.let {
+                                eventListener?.onLocalStreamReady(it as Any)
+                                return@launch
+                            }
                         }
                     }
                 }
-
             } catch (e: Exception) {
                 eventListener?.onError("SDK Error: ${e.message}")
             }
