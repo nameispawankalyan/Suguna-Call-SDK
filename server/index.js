@@ -1,137 +1,62 @@
 require('dotenv').config();
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+const { AccessToken } = require('livekit-server-sdk');
 const cors = require('cors');
-const jwt = require('jsonwebtoken');
+
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
-});
+// Serve the Web Demo statically so Camera permissions work (localhost is secure context)
+app.use('/demo', express.static(path.join(__dirname, '../examples/web-demo')));
 
-const APP_ID = process.env.SUGUNA_APP_ID;
-const APP_CERTIFICATE = process.env.SUGUNA_APP_CERTIFICATE;
-
-// --- Suguna RTC Token Generation Endpoint ---
-app.post('/generateRtcToken', (req, res) => {
-    const { roomId, userId, role = 'publisher' } = req.body;
-
-    if (!roomId || !userId) {
-        return res.status(400).json({ error: 'roomId and userId are required' });
+const createToken = async (roomName, participantName, role) => {
+    // If we don't have keys, error out
+    if (!process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+        throw new Error('LIVEKIT_API_KEY or LIVEKIT_API_SECRET is missing in .env file');
     }
 
-    // RTC Privileges (Agora Style)
-    const privileges = {
-        canPublish: role === 'publisher',
+    const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
+        identity: participantName,
+    });
+
+    // Permission Logic
+    // Host: Can publish video/audio
+    // Audience: Can ONLY subscribe (watch)
+    const isHost = role === 'host';
+
+    at.addGrant({
+        roomJoin: true,
+        room: roomName,
+        canPublish: isHost,
         canSubscribe: true,
-        streamType: 'high-definition'
-    };
+        canPublishData: isHost,
+    });
 
-    // Create a secure RTC token
-    const rtcToken = jwt.sign(
-        { roomId, userId, appId: APP_ID, privileges },
-        process.env.JWT_SECRET,
-        { expiresIn: '24h' }
-    );
+    return await at.toJwt();
+};
 
-    res.json({ rtcToken, appId: APP_ID, expiresIn: 86400 });
-});
+app.post('/getToken', async (req, res) => {
+    // Expected JSON: { "roomName": "live-1", "participantName": "UserA", "role": "host" }
+    const { roomName, participantName, role = 'audience' } = req.body;
 
-// --- Socket.io Authentication Middleware DISABLED FOR TESTING ---
-/*
-io.use((socket, next) => {
-    const token = socket.handshake.auth.token;
-    const roomId = socket.handshake.query.roomId;
-
-    if (!token) {
-        return next(new Error("Authentication error: Token missing"));
+    if (!roomName || !participantName) {
+        return res.status(400).send('roomName and participantName are required');
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-        if (err) return next(new Error("Authentication error: Invalid token"));
-
-        // Ensure user is authorized for THIS specific room
-        if (decoded.roomId !== roomId) {
-            return next(new Error("Authentication error: Unauthorized for this room"));
-        }
-
-        socket.decoded = decoded;
-        next();
-    });
-});
-*/
-
-// Mock middleware to set decoded data from query params for testing
-io.use((socket, next) => {
-    const userId = socket.handshake.query.userId;
-    const roomId = socket.handshake.query.roomId || "default_room";
-    const role = socket.handshake.query.role || "host"; // Default to host
-    if (userId) {
-        socket.decoded = { userId, roomId, role };
-        next();
-    } else {
-        next(new Error("User ID missing"));
+    try {
+        const token = await createToken(roomName, participantName, role);
+        res.json({ token, role });
+    } catch (e) {
+        console.error("Token Generation Error:", e);
+        res.status(500).send('Error: ' + e.message);
     }
 });
-
-// Store active users: userId -> socketId
-const connectedUsers = {};
-
-io.on('connection', (socket) => {
-    const { roomId, userId, role } = socket.decoded;
-    console.log(`Verified User Connected: ${userId} (${role})`);
-
-    // Register user
-    connectedUsers[userId] = socket.id;
-
-    // --- 1. WhatsApp-like Direct Calling ---
-
-    socket.on('call-user', ({ userToCall, signalData, fromUserId }) => {
-        const socketIdToCall = connectedUsers[userToCall];
-        if (socketIdToCall) {
-            io.to(socketIdToCall).emit("call-made", { signal: signalData, from: fromUserId });
-            console.log(`Call forwarded from ${fromUserId} to ${userToCall}`);
-        } else {
-            console.log(`User ${userToCall} is offline or not found.`);
-            // Optional: Emit 'user-offline' back to caller
-        }
-    });
-
-    socket.on('accept-call', ({ signal, to }) => {
-        const socketIdToCall = connectedUsers[to];
-        io.to(socketIdToCall).emit("call-accepted", signal);
-    });
-
-    socket.on('reject-call', ({ to }) => {
-        const socketIdToCall = connectedUsers[to];
-        io.to(socketIdToCall).emit("call-rejected");
-    });
-
-    // --- 2. Existing Room Logic ---
-
-    socket.on('join-room', () => {
-        socket.join(roomId);
-        // Broadcast user joined with ROLE info
-        socket.to(roomId).emit('user-joined', { userId, role });
-    });
-
-    socket.on('disconnect', () => {
-        console.log(`User ${userId} disconnected`);
-        delete connectedUsers[userId]; // Clean up
-        socket.to(roomId).emit('user-left', userId);
-    });
-
-    socket.on('offer', (data) => socket.to(roomId).emit('offer', data));
-    socket.on('answer', (data) => socket.to(roomId).emit('answer', data));
-    socket.on('ice-candidate', (data) => socket.to(roomId).emit('ice-candidate', data));
-});
-
-app.get('/', (req, res) => res.send('Suguna Secured RTC Server is running across all platforms.'));
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Secured Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`🚀 LiveKit Token Server running on port ${PORT}`);
+    console.log(`Endpoint: POST http://localhost:${PORT}/getToken`);
+});
