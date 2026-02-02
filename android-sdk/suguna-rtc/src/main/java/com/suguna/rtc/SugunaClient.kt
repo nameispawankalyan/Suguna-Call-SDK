@@ -67,7 +67,7 @@ class SugunaClient(
                 kotlinx.coroutines.delay(1000)
 
                 // Try to find the local video track
-                room?.localParticipant?.videoTrackPublications?.firstOrNull()?.track?.let { videoTrack ->
+                room?.localParticipant?.videoTrackPublications?.firstOrNull()?.videoTrack?.let { videoTrack ->
                     eventListener?.onLocalStreamReady(videoTrack as Any)
                 }
 
