@@ -49,24 +49,30 @@ class SugunaClient(
         this.eventListener = listener
     }
 
-    fun initialize(roomId: String, rtcToken: String, role: String = ROLE_HOST) {
+    fun initialize(roomName: String, token: String, role: String) {
         scope.launch {
             try {
-                // Initialize Room (Removed overrides for compatibility)
+                // Initialize Room
                 room = LiveKit.create(context)
-
                 setupRoomListeners()
 
                 // Connect
-                room?.connect(serverUrl, rtcToken)
+                room?.connect(serverUrl, token)
                 
-                if (role == ROLE_HOST) {
-                    startLocalStream()
+                // Enable media
+                room?.localParticipant?.setCameraEnabled(true)
+                room?.localParticipant?.setMicrophoneEnabled(true)
+
+                // Wait a bit for track to be ready
+                kotlinx.coroutines.delay(1000)
+
+                // Try to find the local video track
+                room?.localParticipant?.videoTrackPublications?.firstOrNull()?.videoTrack?.let { videoTrack ->
+                    eventListener?.onLocalStreamReady(videoTrack)
                 }
 
             } catch (e: Exception) {
-                eventListener?.onError("Connection Failed: ${e.message}")
-                e.printStackTrace()
+                eventListener?.onError("SDK Error: ${e.message}")
             }
         }
     }
