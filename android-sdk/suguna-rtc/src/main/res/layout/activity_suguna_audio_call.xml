@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#121212" android:fitsSystemWindows="false">
+
+    <!-- Header -->
+    <LinearLayout android:id="@+id/header" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:padding="16dp" app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_lock_filled" app:tint="#B0BEC5"/>
+
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginStart="12dp">
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Suguna Calling" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="16sp"/>
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="End-to-End Encrypted" android:textColor="#B0BEC5" android:textSize="10sp"/>
+        </LinearLayout>
+
+        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:src="@drawable/ic_shield_check" app:tint="#ECEFF1"/>
+    </LinearLayout>
+
+    <!-- Profiles Container -->
+    <LinearLayout android:id="@+id/profilesContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center" android:layout_marginTop="60dp" app:layout_constraintTop_toBottomOf="@id/header">
+
+        <!-- Profile 1 (Remote - Soumya) -->
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center" android:layout_marginEnd="24dp">
+
+            <RelativeLayout android:layout_width="140dp" android:layout_height="140dp">
+
+                <!-- 3 Layer Ripples -->
+                <View android:id="@+id/viewRemoteRipple3" android:layout_width="110dp" android:layout_height="110dp" android:background="@drawable/bg_ripple_glow" android:visibility="invisible" android:layout_centerInParent="true"/>
+
+                <View android:id="@+id/viewRemoteRipple2" android:layout_width="110dp" android:layout_height="110dp" android:background="@drawable/bg_ripple_glow" android:visibility="invisible" android:layout_centerInParent="true"/>
+
+                <View android:id="@+id/viewRemoteRipple1" android:layout_width="110dp" android:layout_height="110dp" android:background="@drawable/bg_ripple_glow" android:visibility="invisible" android:layout_centerInParent="true"/>
+
+                <com.google.android.material.imageview.ShapeableImageView android:id="@+id/ivRemoteProfile" android:layout_width="110dp" android:layout_height="110dp" android:layout_centerInParent="true" android:scaleType="centerCrop" app:shapeAppearanceOverlay="@style/CircleImage" android:background="#333" tools:srcCompat="@tools:sample/avatars"/>
+            </RelativeLayout>
+
+            <TextView android:id="@+id/tvRemoteName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Soumya" android:textColor="#FFFFFF" android:textSize="18sp" android:layout_marginTop="8dp"/>
+        </LinearLayout>
+
+        <!-- Profile 2 (Local - Akash) -->
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center" android:layout_marginStart="24dp">
+
+            <RelativeLayout android:layout_width="140dp" android:layout_height="140dp">
+
+                <!-- 3 Layer Ripples -->
+                <View android:id="@+id/viewLocalRipple3" android:layout_width="110dp" android:layout_height="110dp" android:background="@drawable/bg_ripple_glow" android:visibility="invisible" android:layout_centerInParent="true"/>
+
+                <View android:id="@+id/viewLocalRipple2" android:layout_width="110dp" android:layout_height="110dp" android:background="@drawable/bg_ripple_glow" android:visibility="invisible" android:layout_centerInParent="true"/>
+
+                <View android:id="@+id/viewLocalRipple1" android:layout_width="110dp" android:layout_height="110dp" android:background="@drawable/bg_ripple_glow" android:visibility="invisible" android:layout_centerInParent="true"/>
+
+                <com.google.android.material.imageview.ShapeableImageView android:id="@+id/ivLocalProfile" android:layout_width="110dp" android:layout_height="110dp" android:layout_centerInParent="true" android:scaleType="centerCrop" app:shapeAppearanceOverlay="@style/CircleImage" android:background="#2196F3" tools:srcCompat="@tools:sample/avatars"/>
+            </RelativeLayout>
+
+            <TextView android:id="@+id/tvLocalName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Akash" android:textColor="#FFFFFF" android:textSize="18sp" android:layout_marginTop="8dp"/>
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Timer -->
+    <TextView android:id="@+id/tvDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="00:52" android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold" android:background="@drawable/bg_timer_pill" android:paddingStart="24dp" android:paddingEnd="24dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:letterSpacing="0.1" android:layout_marginTop="32dp" app:layout_constraintTop_toBottomOf="@id/profilesContainer" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Add Coins Button (Sender Only) -->
+    <LinearLayout android:id="@+id/btnAddCoins" android:layout_width="wrap_content" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center" android:background="@drawable/bg_btn_gold" android:paddingStart="24dp" android:paddingEnd="24dp" android:layout_marginTop="24dp" android:visibility="gone" app:layout_constraintTop_toBottomOf="@id/tvDuration" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@android:drawable/ic_input_add" app:tint="#000000" android:layout_marginEnd="8dp"/>
+
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Add Coins" android:textColor="#000000" android:textStyle="bold" android:textSize="14sp"/>
+    </LinearLayout>
+
+    <!-- Main Controls (Bottom) -->
+    <LinearLayout android:id="@+id/controls" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center" android:paddingBottom="20dp" app:layout_constraintBottom_toTopOf="@id/tvFooterTrusted">
+
+        <ImageButton android:id="@+id/btnEndCall" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_danger_glass" android:src="@drawable/ic_call_end" app:tint="#FFFFFF" android:padding="16dp" android:layout_marginEnd="24dp"/>
+
+        <ImageButton android:id="@+id/btnMute" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_glass" android:src="@drawable/ic_mic_on" app:tint="#FFFFFF" android:padding="16dp" android:layout_marginEnd="24dp"/>
+
+        <ImageButton android:id="@+id/btnSpeaker" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_glass" android:src="@drawable/ic_speaker_on" app:tint="#FFFFFF" android:padding="16dp"/>
+
+    </LinearLayout>
+
+    <!-- Footer Trusted Text -->
+    <TextView android:id="@+id/tvFooterTrusted" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Secured by Suguna Calling" android:textColor="#80FFFFFF" android:textSize="12sp" android:layout_marginBottom="16dp" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Gifts Grid (Above Controls) -->
+
+
+</androidx.constraintlayout.widget.ConstraintLayout>

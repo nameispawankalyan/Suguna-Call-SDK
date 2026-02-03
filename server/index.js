@@ -9,6 +9,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const roomManager = require('./roomManager');
+
 // Serve the Web Demo statically so Camera permissions work (localhost is secure context)
 app.use('/demo', express.static(path.join(__dirname, '../examples/web-demo')));
 
@@ -39,8 +41,8 @@ const createToken = async (roomName, participantName, role) => {
 };
 
 app.post('/getToken', async (req, res) => {
-    // Expected JSON: { "roomName": "live-1", "participantName": "UserA", "role": "host" }
-    const { roomName, participantName, role = 'audience' } = req.body;
+    // Expected JSON: { "roomName": "live-1", "participantName": "UserA", "role": "host", "webhookUrl": "...", "pricePerMin": 10 }
+    const { roomName, participantName, role = 'audience', webhookUrl, pricePerMin } = req.body;
 
     if (!roomName || !participantName) {
         return res.status(400).send('roomName and participantName are required');
@@ -48,10 +50,26 @@ app.post('/getToken', async (req, res) => {
 
     try {
         const token = await createToken(roomName, participantName, role);
+
+        // Start Monitoring if Webhook URL is provided and user is Host
+        if (role === 'host' && webhookUrl) {
+            roomManager.startMonitoring(roomName, participantName, webhookUrl, pricePerMin || 10);
+        }
+
         res.json({ token, role });
     } catch (e) {
         console.error("Token Generation Error:", e);
         res.status(500).send('Error: ' + e.message);
+    }
+});
+
+app.post('/endCall', (req, res) => {
+    const { roomName } = req.body;
+    if (roomName) {
+        roomManager.stopMonitoring(roomName);
+        res.json({ success: true });
+    } else {
+        res.status(400).json({ error: "Missing roomName" });
     }
 });
 

@@ -17,3 +17,4 @@ captures/
 # Output files
 *.apk
 *.aar
+.env

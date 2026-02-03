@@ -57,9 +57,14 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     }
 
     interface SugunaEvents {
+        fun onConnected(userId: String) // ✅ Added to get authoritative Local ID
         fun onLocalStreamReady(videoTrack: VideoTrack)
         fun onRemoteStreamReady(userId: String?, videoTrack: VideoTrack)
+        fun onUserJoined(participant: io.livekit.android.room.participant.RemoteParticipant)
         fun onUserLeft(userId: String?)
+        // New Event: Active Speaker
+        fun onActiveSpeakerChanged(speakers: List<String>) 
+        fun onDataReceived(data: String)
         fun onError(message: String)
     }
 
@@ -77,36 +82,52 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                 // Connect
                 room?.connect(serverUrl, token)
                 
+                // ✅ Notify Activity of the Actual Local ID
+                val myIdentity = room?.localParticipant?.identity?.value ?: ""
+                eventListener?.onConnected(myIdentity)
+                
+                // Trigger for already connected participants (if any)
+                room?.remoteParticipants?.values?.forEach { participant ->
+                    eventListener?.onUserJoined(participant)
+                }
+                
                 // Configure Audio Mode
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 
-                // Default Speaker Logic: If manual setting provided, use it. Else, Video=Speaker, Audio=Earpiece.
+                // Default Speaker Logic
                 val initialSpeakerState = defaultSpeakerOn ?: isVideoCall 
                 setSpeakerphoneEnabled(initialSpeakerState)
                 
                 if (role == ROLE_HOST) {
-                    // Check Permission First - Audio is mandatory for calls
+                    // Check Permission First
                     if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                          eventListener?.onError("Mic Permission Missing!")
                          return@launch
                     }
                     
-                    // Check Camera Permission only if doing Video Call
                     if (isVideoCall && context.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                          eventListener?.onError("Camera Permission Missing!")
                          return@launch
                     }
 
-                    // Enable mic (always for host)
                     room?.localParticipant?.setMicrophoneEnabled(true)
-
-                    // Enable camera only if Video Call
                     if (isVideoCall) {
                         room?.localParticipant?.setCameraEnabled(true)
                     }
                 }
             } catch (e: Exception) {
                 eventListener?.onError("SDK Init Error: ${e.message}")
+            }
+        }
+    }
+    
+    fun publishData(message: String) {
+        scope.launch {
+            try {
+                val data = message.toByteArray(Charsets.UTF_8)
+                room?.localParticipant?.publishData(data)
+            } catch (e: Exception) {
+                // Log error
             }
         }
     }
@@ -126,10 +147,8 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
         }
 
         if (isHeadsetConnected) {
-            // Priority: Bluetooth/Headset (Disable Speakerphone)
             audioManager.isSpeakerphoneOn = false
         } else {
-            // Toggle Speakerphone
             audioManager.isSpeakerphoneOn = enable
         }
     }
@@ -154,6 +173,23 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                         if (track is VideoTrack) {
                             eventListener?.onRemoteStreamReady(event.participant.identity?.value, track)
                         }
+                    }
+                    
+                    // ✅ USER JOINED
+                    is RoomEvent.ParticipantConnected -> {
+                         eventListener?.onUserJoined(event.participant)
+                    }
+                    
+                    // ✅ ACTIVE SPEAKERS (For Ripple Effect)
+                    is RoomEvent.ActiveSpeakersChanged -> {
+                        val activeSpeakerIds = event.speakers.map { it.identity?.value ?: "" }
+                        eventListener?.onActiveSpeakerChanged(activeSpeakerIds)
+                    }
+                    
+                    // ✅ DATA RECEIVED (For Timer Sync)
+                    is RoomEvent.DataReceived -> {
+                        val message = String(event.data, Charsets.UTF_8)
+                        eventListener?.onDataReceived(message)
                     }
 
                     is RoomEvent.ParticipantDisconnected -> {
