@@ -1,0 +1,204 @@
+const admin = require("firebase-admin");
+const Encryption = require("./encryption");
+const fs = require("fs");
+const path = require("path");
+
+class TenantManager {
+    constructor() {
+        this.apps = new Map(); // appId -> { firebaseApp, config }
+
+        // Initial configuration for FriendZone
+        this.appConfigs = {
+            "friendzone_001": {
+                name: "FriendZone",
+                serviceAccount: "./configs/friendzone.json",
+                databaseURL: "https://friendzone-a40d9-default-rtdb.asia-southeast1.firebasedatabase.app",
+                encryptionKey: "90083A40204036E21A98F25FDAD274D4A65E4A1A2F70C0B37013DD3FCDE3E277"
+            },
+        };
+    }
+
+    initialize() {
+        console.log("Initializing Tenant Manager...");
+        for (const [appId, config] of Object.entries(this.appConfigs)) {
+            try {
+                const serviceAccountPath = path.resolve(__dirname, config.serviceAccount);
+                if (fs.existsSync(serviceAccountPath)) {
+                    const firebaseApp = admin.initializeApp({
+                        credential: admin.credential.cert(serviceAccountPath),
+                        databaseURL: config.databaseURL
+                    }, appId); // Initialize as a named app
+
+                    this.apps.set(appId, { firebaseApp, config });
+                    console.log(`✅ Loaded configuration for App: ${config.name} (${appId})`);
+                } else {
+                    console.warn(`⚠️ Service account not found for ${appId} at ${serviceAccountPath}`);
+                }
+            } catch (error) {
+                console.error(`❌ Error initializing app ${appId}:`, error);
+            }
+        }
+    }
+
+    getApp(appId) {
+        return this.apps.get(appId);
+    }
+
+    async sendFCM(appId, userId, callData) {
+        console.log(`[FCM] Attempting to send to ${userId} for App ${appId}`);
+        const tenant = this.getApp(appId);
+        if (!tenant) {
+            console.error(`[FCM] App configuration not found for AppID: ${appId}`);
+            return;
+        }
+
+        try {
+            const db = admin.database(tenant.firebaseApp);
+            const snapshot = await db.ref(`Profile_Details/${userId}/FcmToken`).once("value");
+            const encryptedToken = snapshot.val();
+
+            console.log(`[FCM] Encrypted Token for ${userId}: ${encryptedToken ? "FOUND" : "MISSING"}`);
+
+            if (encryptedToken) {
+                const rawToken = Encryption.decrypt(encryptedToken);
+                console.log(`[FCM] Decrypted Token: ${rawToken ? "VALID (" + rawToken.substring(0, 10) + "...)" : "FAILED to Decrypt"}`);
+
+                if (rawToken) {
+                    const sortedIds = [callData.senderUserId, userId].sort();
+                    const roomTag = `room_${sortedIds[0]}_${sortedIds[1]}`;
+
+                    const message = {
+                        // notification: {
+                        //     title: "Incoming Call",
+                        //     body: `${callData.senderName} is calling you...`,
+                        //     // Tag allows system to replace existing notification with same tag
+                        //     // Also used to cancel it programmatically if possible
+                        // },
+                        data: {
+                            type: "SugunaCall",
+                            senderId: callData.senderUserId,
+                            senderName: callData.senderName,
+                            senderImage: callData.senderImage,
+                            callType: callData.callType,
+                            callId: roomTag,
+                            appId: appId
+                        },
+                        token: rawToken,
+                        android: {
+                            priority: "high",
+                            ttl: 0,
+                            // notification: { // Commented out to prevent system notification
+                            //     channelId: "suguna_call_channel",
+                            //     clickAction: "SUGUNA_INCOMING_CALL",
+                            //     priority: "max",
+                            //     visibility: "public",
+                            //     sound: "default",
+                            //     tag: roomTag 
+                            // }
+                        }
+                    };
+                    await admin.messaging(tenant.firebaseApp).send(message);
+                    console.log(`🚀 FCM Sent for App: ${tenant.config.name} to User: ${userId}`);
+                }
+            }
+        } catch (error) {
+            console.error(`FCM Error for App ${appId}:`, error);
+        }
+    }
+
+    async sendCancelFCM(appId, userId, callId) {
+        const tenant = this.getApp(appId);
+        if (!tenant) return;
+
+        try {
+            const db = admin.database(tenant.firebaseApp);
+            const snapshot = await db.ref(`Profile_Details/${userId}/FcmToken`).once("value");
+            const encryptedToken = snapshot.val();
+
+            if (encryptedToken) {
+                const rawToken = Encryption.decrypt(encryptedToken);
+                if (rawToken) {
+                    const message = {
+                        data: {
+                            type: "CancelCall",
+                            callId: callId
+                        },
+                        token: rawToken,
+                        android: { priority: "high" }
+                    };
+                    await admin.messaging(tenant.firebaseApp).send(message);
+                    console.log(`🛑 Cancel Signal Sent to User: ${userId}`);
+                }
+            }
+        } catch (error) {
+            console.error(`Cancel FCM Error:`, error);
+        }
+    }
+
+    async initializeCallHistory(appId, callId, callerUid, receiverUid, callType) {
+        const tenant = this.getApp(appId);
+        if (!tenant) return;
+
+        try {
+            const db = admin.database(tenant.firebaseApp);
+            const startTime = Date.now().toString();
+
+            await db.ref(`CallHistory/${callId}`).set({
+                CallID: Encryption.encrypt(callId),
+                CallerUid: Encryption.encrypt(callerUid),
+                ReceiverUid: Encryption.encrypt(receiverUid),
+                CallType: Encryption.encrypt(callType || "Audio"),
+                Status: Encryption.encrypt("Calling"),
+                RequestTime: Encryption.encrypt(startTime),
+                TotalCoins: Encryption.encrypt("0"),
+                TotalBeans: Encryption.encrypt("0")
+            });
+            console.log(`Initialized CallHistory: ${callId} for App: ${appId}`);
+        } catch (error) {
+            console.error(`Error initializing CallHistory for App ${appId}:`, error);
+        }
+    }
+
+    async updateCallStatus(appId, callId, status, extraData = {}) {
+        const tenant = this.getApp(appId);
+        if (!tenant) return;
+
+        try {
+            const db = admin.database(tenant.firebaseApp);
+            const ref = db.ref(`CallHistory/${callId}`);
+
+            const updates = {
+                Status: Encryption.encrypt(status)
+            };
+
+            if (status === "Answered") {
+                const now = Date.now().toString();
+                updates.StartTime = Encryption.encrypt(now);
+                updates.AnswerTime = Encryption.encrypt(now);
+            }
+
+            if (["Ended", "Declined", "No Answer"].includes(status)) {
+                const now = Date.now().toString();
+                updates.EndTime = Encryption.encrypt(now);
+
+                // Duration Calculation
+                const snap = await ref.once('value');
+                if (snap.exists()) {
+                    const val = snap.val();
+                    if (val.AnswerTime) {
+                        const ansTime = parseInt(Encryption.decrypt(val.AnswerTime));
+                        const duration = Math.max(0, parseInt(now) - ansTime);
+                        updates.Duration = Encryption.encrypt(duration.toString());
+                    }
+                }
+            }
+
+            await ref.update(updates);
+            console.log(`Updated CallHistory Status: ${callId} -> ${status}`);
+        } catch (error) {
+            console.error(`Error updating CallHistory for App ${appId}:`, error);
+        }
+    }
+}
+
+module.exports = new TenantManager();

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.telecom.DisconnectCause
 import android.view.View
 import android.view.animation.AnimationUtils
 import android.widget.ImageButton
@@ -54,12 +55,24 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     private var isSender = false
     private var pricePerMin = 20
 
+    private val REQUEST_PERMISSION_CODE = 1001
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_suguna_audio_call)
         
-        // Prevent Screenshots/Screen Recording
-        window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        
+        // Prevent Screenshots/Screen Recording and Keep Screen On
+        window.setFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+       // window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE)
+       
+       // Ensure Volume Buttons control Voice Call volume
+       volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
+
+        // 0. Check Permissions
+        if (checkSelfPermission(android.Manifest.`permission`.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.`permission`.RECORD_AUDIO), REQUEST_PERMISSION_CODE)
+        }
 
         // 1. Get Data from Intent
         val token = intent.getStringExtra("TOKEN") ?: ""
@@ -67,6 +80,8 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         val userName = intent.getStringExtra("USER_NAME") ?: "Unknown"
         val userImage = intent.getStringExtra("USER_IMAGE") ?: ""
         val userId = intent.getStringExtra("USER_ID") ?: ""
+        val rName = intent.getStringExtra("REMOTE_NAME") ?: "FriendZone User"
+        val rImage = intent.getStringExtra("REMOTE_IMAGE") ?: ""
         coins = intent.getLongExtra("COINS", 0L)
         
         localUserId = userId 
@@ -92,6 +107,11 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         if (userImage.isNotEmpty()) {
             Glide.with(this).load(userImage).placeholder(R.drawable.circle_outline_white_20).into(ivLocalProfile)
         }
+        
+        tvRemoteName.text = rName
+        if (rImage.isNotEmpty()) {
+            Glide.with(this).load(rImage).placeholder(R.drawable.circle_outline_white_20).into(ivRemoteProfile)
+        }
 
         // 3. Initialize SDK
         sugunaClient = SugunaClient(this, serverUrl)
@@ -100,6 +120,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             override fun onConnected(userId: String) {
                 // Update Local ID with the authentic one from LiveKit
                 localUserId = userId
+                runOnUiThread { forceSpeakerOutput(isSpeakerOn) }
             }
 
             override fun onLocalStreamReady(videoTrack: VideoTrack) {}
@@ -108,13 +129,18 @@ class SugunaAudioCallActivity : AppCompatActivity() {
 
             override fun onUserJoined(participant: io.livekit.android.room.participant.RemoteParticipant) {
                 runOnUiThread {
-                    val name = if (participant.name.isNullOrEmpty()) participant.identity?.value ?: "Unknown" else participant.name
                     remoteUserId = participant.identity?.value ?: "" // Capture remote ID
                     
-                    tvRemoteName.text = name
-                    val imageUrl = "https://ui-avatars.com/api/?name=$name&background=random&size=200"
-                    Glide.with(this@SugunaAudioCallActivity).load(imageUrl).placeholder(R.drawable.circle_outline_white_20).into(ivRemoteProfile)
-                    Toast.makeText(this@SugunaAudioCallActivity, "$name Joined", Toast.LENGTH_SHORT).show()
+                    // 🛡️ Safety: Only update name if it's a REAL name (not generic SDK labels)
+                    val pName = participant.name
+                    if (!pName.isNullOrEmpty()) {
+                        val isGeneric = pName == "Caller" || pName == "Receiver" || pName == "Unknown" || pName == "null"
+                        if (!isGeneric) {
+                            tvRemoteName.text = pName
+                        }
+                    }
+                    
+                    Toast.makeText(this@SugunaAudioCallActivity, "${tvRemoteName.text} Joined", Toast.LENGTH_SHORT).show()
                 }
             }
             
@@ -171,6 +197,11 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         handler.postDelayed({
             tvDuration.visibility = View.VISIBLE
         }, 1000)
+
+        // 🔥 Force Audio Routing on Start
+        handler.postDelayed({
+             forceSpeakerOutput(true)
+        }, 800)
     }
 
     private fun initViews() {
@@ -229,6 +260,9 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             animateButtonClick(btnSpeaker)
             isSpeakerOn = !isSpeakerOn
             sugunaClient.setSpeakerphoneEnabled(isSpeakerOn)
+            
+            // Force Audio Manager Routing
+            forceSpeakerOutput(isSpeakerOn)
             
             // UI Update: Speaker ON = White BG + Black Icon, OFF = Glass BG + White Icon
             if (isSpeakerOn) {
@@ -345,7 +379,40 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         v3.visibility = View.INVISIBLE
     }
 
+    private fun forceSpeakerOutput(enable: Boolean) {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            
+            // Ensure Communication Mode
+            if (audioManager.mode != android.media.AudioManager.MODE_IN_COMMUNICATION) {
+                audioManager.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+            }
+            
+            if (enable) {
+                audioManager.stopBluetoothSco()
+                audioManager.isBluetoothScoOn = false
+                audioManager.isSpeakerphoneOn = true
+            } else {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.startBluetoothSco()
+                audioManager.isBluetoothScoOn = true
+            }
+            
+            // Sync with SDK
+            sugunaClient.setSpeakerphoneEnabled(enable)
+            
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun endCall() {
+        val roomName = intent.getStringExtra("CALL_ID") ?: ""
+        if (roomName.isNotEmpty()) {
+            val endCallIntent = Intent("com.suguna.rtc.ACTION_END_CALL")
+            endCallIntent.putExtra("ROOM_NAME", roomName)
+            sendBroadcast(endCallIntent)
+        }
         sugunaClient.leaveRoom()
         finish()
     }
@@ -354,8 +421,30 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         super.onDestroy()
         sugunaClient.leaveRoom()
         handler.removeCallbacksAndMessages(null)
+        
+        // Reset Audio Routing
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            audioManager.mode = android.media.AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
     
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_PERMISSION_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // Permission Granted! Enable Mic
+                sugunaClient.setMicrophoneEnabled(true)
+            } else {
+                Toast.makeText(this, "Microphone Permission is required for calls", Toast.LENGTH_LONG).show()
+                finish()
+            }
+        }
+    }
+
     companion object {
         fun start(
             context: Context,
@@ -365,6 +454,8 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             userId: String,
             userName: String,
             userImage: String,
+            remoteName: String = "",
+            remoteImage: String = "",
             coins: Long,
             isSender: Boolean,
             webhookUrl: String
@@ -376,6 +467,8 @@ class SugunaAudioCallActivity : AppCompatActivity() {
                 putExtra("USER_ID", userId)
                 putExtra("USER_NAME", userName)
                 putExtra("USER_IMAGE", userImage)
+                putExtra("REMOTE_NAME", remoteName)
+                putExtra("REMOTE_IMAGE", remoteImage)
                 putExtra("COINS", coins)
                 putExtra("IS_SENDER", isSender)
                 putExtra("WEBHOOK_URL", webhookUrl)

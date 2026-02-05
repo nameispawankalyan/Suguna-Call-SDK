@@ -17,4 +17,8 @@ captures/
 # Output files
 *.apk
 *.aar
+
+# Sensitive files
+server/configs/
+server/.env
 .env

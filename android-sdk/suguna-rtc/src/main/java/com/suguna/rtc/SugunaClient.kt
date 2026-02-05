@@ -75,7 +75,7 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     fun initialize(token: String, role: String, isVideoCall: Boolean = true, defaultSpeakerOn: Boolean? = null) {
         scope.launch {
             try {
-                // Initialize Room
+                // Initialize Room (Standard VoIP for Earpiece/Bluetooth support)
                 room = LiveKit.create(context)
                 setupRoomListeners()
 
@@ -91,7 +91,7 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                     eventListener?.onUserJoined(participant)
                 }
                 
-                // Configure Audio Mode
+                // Configure Audio Mode - Must be COMMUNICATION for Earpiece/BT Routing
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 
                 // Default Speaker Logic
@@ -133,23 +133,21 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     }
     
     fun setSpeakerphoneEnabled(enable: Boolean) {
-        var isHeadsetConnected = false
-        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        for (device in devices) {
-            val type = device.type
-            if (type == AudioDeviceInfo.TYPE_WIRED_HEADSET || 
-                type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || 
-                type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || 
-                type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
-                isHeadsetConnected = true
-                break
-            }
+        // Enforce Communication Mode for correct routing
+        if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         }
-
-        if (isHeadsetConnected) {
-            audioManager.isSpeakerphoneOn = false
+        
+        if (enable) {
+            // Speaker Requested: Turn off BT SCO, Turn ON Speaker
+            audioManager.stopBluetoothSco()
+            audioManager.isBluetoothScoOn = false
+            audioManager.isSpeakerphoneOn = true
         } else {
-            audioManager.isSpeakerphoneOn = enable
+            // Earpiece/BT Requested: Turn OFF Speaker, Enable BT SCO if available
+            audioManager.isSpeakerphoneOn = false
+            audioManager.startBluetoothSco()
+            audioManager.isBluetoothScoOn = true
         }
     }
 
