@@ -349,10 +349,38 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         }
         
         tvDuration.text = timeString
+
+        // 🔥 Milestone Vibration Alerts (2 min, 1.5 min, 1 min)
+        if (secondsLeft == 120L || secondsLeft == 90L || secondsLeft == 60L) {
+            triggerVibrationAlert(5)
+        }
         
         if (secondsLeft <= 0 && !isSender) {
              Toast.makeText(this, "Time Up!", Toast.LENGTH_SHORT).show()
              endCall()
+        }
+    }
+
+    private fun triggerVibrationAlert(count: Int) {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            if (vibrator.hasVibrator()) {
+                // Short buzzes: 300ms on, 200ms off
+                val pattern = LongArray(count * 2)
+                for (i in 0 until count) {
+                    pattern[i * 2] = 200L // Off
+                    pattern[i * 2 + 1] = 300L // On
+                }
+                
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(pattern, -1)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
