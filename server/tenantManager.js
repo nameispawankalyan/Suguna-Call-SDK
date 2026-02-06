@@ -143,7 +143,7 @@ class TenantManager {
             const db = admin.database(tenant.firebaseApp);
             const startTime = Date.now().toString();
 
-            await db.ref(`CallHistory/${callId}`).set({
+            const historyData = {
                 CallID: Encryption.encrypt(callId),
                 CallerUid: Encryption.encrypt(callerUid),
                 ReceiverUid: Encryption.encrypt(receiverUid),
@@ -152,8 +152,16 @@ class TenantManager {
                 RequestTime: Encryption.encrypt(startTime),
                 TotalCoins: Encryption.encrypt("0"),
                 TotalBeans: Encryption.encrypt("0")
-            });
-            console.log(`Initialized CallHistory: ${callId} for App: ${appId}`);
+            };
+
+            // 1. Save in Global Node
+            await db.ref(`CallHistory/${callId}`).set(historyData);
+
+            // 2. Save in User Node (For both users)
+            await db.ref(`CallHistory/${callerUid}/${callId}`).set(historyData);
+            await db.ref(`CallHistory/${receiverUid}/${callId}`).set(historyData);
+
+            console.log(`Initialized CallHistory (Global & UserWise): ${callId}`);
         } catch (error) {
             console.error(`Error initializing CallHistory for App ${appId}:`, error);
         }
@@ -177,7 +185,7 @@ class TenantManager {
                 updates.AnswerTime = Encryption.encrypt(now);
             }
 
-            if (["Ended", "Declined", "No Answer"].includes(status)) {
+            if (["Ended", "Declined", "No Answer", "Cancelled", "Rejected"].includes(status)) {
                 const now = Date.now().toString();
                 updates.EndTime = Encryption.encrypt(now);
 
@@ -185,16 +193,35 @@ class TenantManager {
                 const snap = await ref.once('value');
                 if (snap.exists()) {
                     const val = snap.val();
+                    const callerUid = Encryption.decrypt(val.CallerUid);
+                    const receiverUid = Encryption.decrypt(val.ReceiverUid);
+
                     if (val.AnswerTime) {
                         const ansTime = parseInt(Encryption.decrypt(val.AnswerTime));
                         const duration = Math.max(0, parseInt(now) - ansTime);
                         updates.Duration = Encryption.encrypt(duration.toString());
                     }
+
+                    // Perform Updates on all nodes
+                    await ref.update(updates);
+                    if (callerUid) await db.ref(`CallHistory/${callerUid}/${callId}`).update(updates);
+                    if (receiverUid) await db.ref(`CallHistory/${receiverUid}/${callId}`).update(updates);
+                } else {
+                    await ref.update(updates);
+                }
+            } else {
+                // For "Answered" or other statuses, update global and find UIDs if possible
+                await ref.update(updates);
+                const snap = await ref.once('value');
+                if (snap.exists()) {
+                    const val = snap.val();
+                    const callerUid = Encryption.decrypt(val.CallerUid);
+                    const receiverUid = Encryption.decrypt(val.ReceiverUid);
+                    if (callerUid) await db.ref(`CallHistory/${callerUid}/${callId}`).update(updates);
+                    if (receiverUid) await db.ref(`CallHistory/${receiverUid}/${callId}`).update(updates);
                 }
             }
-
-            await ref.update(updates);
-            console.log(`Updated CallHistory Status: ${callId} -> ${status}`);
+            console.log(`Updated CallHistory Status (Global & UserWise): ${callId} -> ${status}`);
         } catch (error) {
             console.error(`Error updating CallHistory for App ${appId}:`, error);
         }

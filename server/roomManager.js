@@ -13,7 +13,7 @@ class RoomManager {
         this.sessions = new Map(); // roomId -> { timer, userId, webhookUrl, price, elapsedMinutes }
     }
 
-    startMonitoring(roomId, userId, webhookUrl, pricePerMin, appId) {
+    startMonitoring(roomId, userId, webhookUrl, pricePerMin, appId, callType, receiverId) {
         if (this.sessions.has(roomId)) {
             console.log(`Already monitoring room: ${roomId}`);
             return;
@@ -27,7 +27,9 @@ class RoomManager {
             webhookUrl,
             price: pricePerMin,
             elapsedMinutes: 0,
-            appId: appId || "friendzone_001"
+            appId: appId || "friendzone_001",
+            callType: callType || "Audio",
+            receiverId: receiverId
         };
         this.sessions.set(roomId, sessionData);
 
@@ -79,9 +81,11 @@ class RoomManager {
                     event: 'DEDUCT_COINS',
                     roomId: roomId,
                     userId: session.userId,
+                    receiverId: session.receiverId, // Pass receiverId to backend
                     amount: amountToDeduct,
                     minutes: session.elapsedMinutes,
-                    isInitial: isInitial // Pass flag to backend
+                    isInitial: isInitial, // Pass flag to backend
+                    callType: session.callType // Pass callType to backend
                 })
             });
 

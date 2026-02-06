@@ -12,6 +12,7 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import com.bumptech.glide.Glide
 import io.livekit.android.room.track.VideoTrack
@@ -60,6 +61,13 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_suguna_audio_call)
+        
+        // 🛑 Block Back Press: Ensures both gesture navigation and buttons are disabled
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Do nothing: User must click "End Call" to exit
+            }
+        })
         
         
         // Prevent Screenshots/Screen Recording and Keep Screen On
@@ -476,5 +484,10 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             }
             context.startActivity(intent)
         }
+    }
+
+    override fun onBackPressed() {
+        // 🛑 Block Back Press: User must click "End Call" button to exit.
+        // This ensures the call logic (cleanup, credits, etc.) is handled via endCall().
     }
 }

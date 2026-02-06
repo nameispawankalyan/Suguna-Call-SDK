@@ -87,17 +87,16 @@ io.on('connection', (socket) => {
 
         const targetData = userSocketMap.get(targetId);
 
+        const callId = `room_suguna_${Date.now()}`;
+
         // 3. Set Busy Status & Init History
         if (tenant) {
             const db = admin.database(tenant.firebaseApp);
             db.ref(`BroadCast/${userId}`).update({ isBusy: true });
             db.ref(`BroadCast/${targetId}`).update({ isBusy: true });
 
-            const callId = `room_${[userId, targetId].sort().join('_')}`;
             tenantManager.initializeCallHistory(appId, callId, userId, targetId, type);
         }
-
-        const callIdInstance = `room_${userId}_${Date.now()}`;
 
         // 4. Connect via Socket
         if (targetData && targetData.socketId) {
@@ -106,7 +105,7 @@ io.on('connection', (socket) => {
                 callType: type,
                 senderName,
                 senderImage,
-                roomId: callIdInstance
+                roomId: callId
             });
         }
 
@@ -116,7 +115,7 @@ io.on('connection', (socket) => {
             senderName,
             senderImage,
             callType: type,
-            roomName: callIdInstance
+            roomName: callId
         });
 
         // 6. Return success with target details
@@ -132,7 +131,7 @@ io.on('connection', (socket) => {
             }
         }
 
-        socket.emit('call_success', { targetId, targetName, targetImage, type });
+        socket.emit('call_success', { targetId, targetName, targetImage, type, roomId: callId });
     });
 
     // --- 2. RANDOM CALL ---
@@ -190,10 +189,10 @@ io.on('connection', (socket) => {
                 const targetId = matchFound.uid || matchFound.UserId;
                 const targetData = userSocketMap.get(targetId);
 
+                const callId = `room_suguna_${Date.now()}`;
+
                 db.ref(`BroadCast/${userId}`).update({ isBusy: true });
                 db.ref(`BroadCast/${targetId}`).update({ isBusy: true });
-
-                const callIdInstance = `room_${userId}_${Date.now()}`;
 
                 if (targetData && targetData.socketId) {
                     io.to(targetData.socketId).emit("incoming_call", {
@@ -201,7 +200,7 @@ io.on('connection', (socket) => {
                         callType: type,
                         senderName,
                         senderImage,
-                        roomId: callIdInstance
+                        roomId: callId
                     });
                 }
 
@@ -210,15 +209,14 @@ io.on('connection', (socket) => {
                     senderName,
                     senderImage,
                     callType: type,
-                    roomName: callIdInstance
+                    roomName: callId
                 });
 
                 const targetName = Encryption.decrypt(matchFound.ProfileName || matchFound.UserName || matchFound.Name) || matchFound.ProfileName || matchFound.UserName || matchFound.Name || "FriendZone User";
                 const targetImage = Encryption.decrypt(matchFound.ProfileImage) || matchFound.ProfileImage || "";
-                socket.emit('call_success', { targetId, targetName, targetImage, type });
+                socket.emit('call_success', { targetId, targetName, targetImage, type, roomId: callId });
 
-                const callIdHistory = `room_${[userId, targetId].sort().join('_')}`;
-                tenantManager.initializeCallHistory(appId, callIdHistory, userId, targetId, type);
+                tenantManager.initializeCallHistory(appId, callId, userId, targetId, type);
 
             } else {
                 socket.emit('call_failed', { reason: 'No matching online users found.' });
@@ -230,53 +228,60 @@ io.on('connection', (socket) => {
     });
 
     socket.on("cancel_call", (data) => {
-        const { targetUserId } = data;
+        const { targetUserId, roomId } = data;
         const userId = socket.userId;
         const appId = socket.appId || "friendzone_001";
         const tenant = tenantManager.getApp(appId);
 
-        console.log(`[CancelCall] ${userId} -> ${targetUserId}`);
+        console.log(`[CancelCall] ${userId} -> ${targetUserId} (Room: ${roomId})`);
 
         if (tenant) {
             const db = admin.database(tenant.firebaseApp);
             db.ref(`BroadCast/${userId}`).update({ isBusy: false });
             if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
+
+            if (roomId) {
+                tenantManager.updateCallStatus(appId, roomId, "Cancelled");
+            }
         }
 
         const targetData = userSocketMap.get(targetUserId);
         if (targetData) {
-            io.to(targetData.socketId).emit("call_cancelled", { from: userId });
+            io.to(targetData.socketId).emit("call_cancelled", { from: userId, roomId });
         }
 
-        tenantManager.sendCancelFCM(appId, targetUserId, `room_${userId}`);
+        tenantManager.sendCancelFCM(appId, targetUserId, roomId || `room_${userId}`);
     });
 
     socket.on("reject_call", (data) => {
-        const { targetUserId } = data;
+        const { targetUserId, roomId } = data;
         const userId = socket.userId;
         const appId = socket.appId || "friendzone_001";
         const tenant = tenantManager.getApp(appId);
 
-        console.log(`[RejectCall] ${userId} / ${targetUserId}`);
+        console.log(`[RejectCall] ${userId} / ${targetUserId} (Room: ${roomId})`);
 
         if (tenant) {
             const db = admin.database(tenant.firebaseApp);
             db.ref(`BroadCast/${userId}`).update({ isBusy: false });
             if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
+
+            if (roomId) {
+                tenantManager.updateCallStatus(appId, roomId, "Rejected");
+            }
         }
 
         const targetData = userSocketMap.get(targetUserId);
         if (targetData) {
-            io.to(targetData.socketId).emit("call_rejected", { from: userId });
+            io.to(targetData.socketId).emit("call_rejected", { from: userId, roomId });
         }
     });
 
     socket.on("accept_call", async (data) => {
-        const { senderUserId, callType, webhookUrl, pricePerMin } = data;
+        const { senderUserId, callType, webhookUrl, pricePerMin, roomId } = data;
         const receiverUserId = socket.userId;
         const appId = socket.appId || "friendzone_001";
-        const sortedIds = [senderUserId, receiverUserId].sort();
-        const roomName = `room_${sortedIds[0]}_${sortedIds[1]}`;
+        const roomName = roomId || `room_${[senderUserId, receiverUserId].sort().join('_')}`;
 
         try {
             tenantManager.updateCallStatus(appId, roomName, "Answered");
@@ -306,7 +311,7 @@ io.on('connection', (socket) => {
             const receiverToken = await createToken(roomName, receiverUserId, 'host', receiverName);
 
             if (webhookUrl) {
-                roomManager.startMonitoring(roomName, senderUserId, webhookUrl, pricePerMin || 20, appId);
+                roomManager.startMonitoring(roomName, senderUserId, webhookUrl, pricePerMin || 20, appId, callType, receiverUserId);
             }
 
             const senderData = userSocketMap.get(senderUserId);
