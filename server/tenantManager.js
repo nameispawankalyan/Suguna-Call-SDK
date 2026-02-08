@@ -13,7 +13,8 @@ class TenantManager {
                 name: "FriendZone",
                 serviceAccount: "./configs/friendzone.json",
                 databaseURL: "https://friendzone-a40d9-default-rtdb.asia-southeast1.firebasedatabase.app",
-                encryptionKey: "90083A40204036E21A98F25FDAD274D4A65E4A1A2F70C0B37013DD3FCDE3E277"
+                encryptionKey: "90083A40204036E21A98F25FDAD274D4A65E4A1A2F70C0B37013DD3FCDE3E277",
+                webhookUrl: "https://asia-south1-friendzone-a40d9.cloudfunctions.net/sugunaWebhook"
             },
         };
     }
@@ -224,6 +225,22 @@ class TenantManager {
             console.log(`Updated CallHistory Status (Global & UserWise): ${callId} -> ${status}`);
         } catch (error) {
             console.error(`Error updating CallHistory for App ${appId}:`, error);
+        }
+    }
+
+    async sendWebhook(appId, body) {
+        const tenant = this.getApp(appId);
+        if (!tenant || !tenant.config.webhookUrl) return;
+
+        try {
+            console.log(`[Webhook] Sending ${body.event} to ${tenant.config.webhookUrl}`);
+            await fetch(tenant.config.webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+        } catch (e) {
+            console.error(`[Webhook] Failed for ${appId}:`, e.message);
         }
     }
 }

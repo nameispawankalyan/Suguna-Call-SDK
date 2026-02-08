@@ -99,7 +99,10 @@ io.on('connection', (socket) => {
         }
 
         // 4. Connect via Socket
+        // 4. Connect via Socket
+        let isOnline = false;
         if (targetData && targetData.socketId) {
+            isOnline = true;
             io.to(targetData.socketId).emit("incoming_call", {
                 senderUserId: userId,
                 callType: type,
@@ -131,7 +134,15 @@ io.on('connection', (socket) => {
             }
         }
 
-        socket.emit('call_success', { targetId, targetName, targetImage, type, roomId: callId });
+        socket.emit('call_success', { targetId, targetName, targetImage, type, roomId: callId, isOnline: isOnline });
+    });
+
+    socket.on("call_received", (data) => {
+        const { senderUserId } = data; // Sender ID to notify
+        const senderData = userSocketMap.get(senderUserId);
+        if (senderData) {
+            io.to(senderData.socketId).emit("call_ringing", { from: socket.userId });
+        }
     });
 
     // --- 2. RANDOM CALL ---
@@ -251,6 +262,14 @@ io.on('connection', (socket) => {
         }
 
         tenantManager.sendCancelFCM(appId, targetUserId, roomId || `room_${userId}`);
+
+        // Trigger Webhook for Missed/Cancelled Call
+        tenantManager.sendWebhook(appId, {
+            event: 'CALL_CANCELLED',
+            roomId: roomId || `room_${userId}`,
+            userId: userId, // Caller
+            receiverId: targetUserId
+        });
     });
 
     socket.on("reject_call", (data) => {
@@ -267,8 +286,48 @@ io.on('connection', (socket) => {
             if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
 
             if (roomId) {
-                tenantManager.updateCallStatus(appId, roomId, "Rejected");
+                tenantManager.updateCallStatus(appId, roomId, "Declined");
             }
+
+            // Trigger Webhook for Declined/Rejected Call
+            tenantManager.sendWebhook(appId, {
+                event: 'CALL_REJECTED',
+                roomId: roomId,
+                userId: userId, // Receiver (Rejector)
+                senderId: targetUserId // Caller
+            });
+        }
+
+        const targetData = userSocketMap.get(targetUserId);
+        if (targetData) {
+            io.to(targetData.socketId).emit("call_rejected", { from: userId, roomId });
+        }
+    });
+
+    socket.on("call_timeout", (data) => {
+        const { targetUserId, roomId } = data; // targetUserId is Caller
+        const userId = socket.userId; // Receiver (Timeout)
+        const appId = socket.appId || "friendzone_001";
+        const tenant = tenantManager.getApp(appId);
+
+        console.log(`[CallTimeout] ${userId} / ${targetUserId} (Room: ${roomId})`);
+
+        if (tenant) {
+            const db = admin.database(tenant.firebaseApp);
+            db.ref(`BroadCast/${userId}`).update({ isBusy: false });
+            if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
+
+            if (roomId) {
+                tenantManager.updateCallStatus(appId, roomId, "No Answer");
+            }
+
+            // Trigger Webhook for Missed Call (Silent Timeout)
+            tenantManager.sendWebhook(appId, {
+                event: 'CALL_MISSED',
+                roomId: roomId,
+                userId: targetUserId, // Caller
+                receiverId: userId // Receiver (Missed Call Count Owner)
+            });
         }
 
         const targetData = userSocketMap.get(targetUserId);
