@@ -2,3 +2,4 @@ livekit-agents>=0.9.0
 livekit-plugins-deepgram
 livekit-plugins-openai
 python-dotenv
+httpx

@@ -307,8 +307,8 @@ io.on('connection', (socket) => {
                 }
             }
 
-            const senderToken = await createToken(roomName, senderUserId, 'host', senderName);
-            const receiverToken = await createToken(roomName, receiverUserId, 'host', receiverName);
+            const senderToken = await createToken(roomName, senderUserId, 'host', senderName, "sender", appId, webhookUrl);
+            const receiverToken = await createToken(roomName, receiverUserId, 'host', receiverName, "receiver", appId, webhookUrl);
 
             if (webhookUrl) {
                 roomManager.startMonitoring(roomName, senderUserId, webhookUrl, pricePerMin || 20, appId, callType, receiverUserId);
@@ -343,8 +343,80 @@ io.on('connection', (socket) => {
     });
 });
 
-const createToken = async (roomName, userId, role, name) => {
-    const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, { identity: userId, name: name });
+// --- API: VIOLATION REPORTING ---
+app.post('/api/violation', async (req, res) => {
+    const { appId, userId, reason, event } = req.body;
+
+    if (event !== 'VIOLATION_DETECTED') return res.status(400).json({ error: 'Invalid Event' });
+    if (!userId) return res.status(400).json({ error: 'Missing UserId' });
+
+    const tenant = tenantManager.getApp(appId || "friendzone_001");
+    if (!tenant) return res.status(500).json({ error: 'Tenant Error' });
+
+    try {
+        const db = admin.database(tenant.firebaseApp);
+
+        // 1. Get Current Strikes
+        const violationsRef = db.ref(`Violations_Summary/${userId}`);
+        const snap = await violationsRef.once('value');
+        let strikes = 0;
+        if (snap.exists()) {
+            strikes = snap.val().strikes || 0;
+        }
+
+        // 2. Increment Strikes
+        strikes += 1;
+
+        // 3. Save Violation Record
+        const newViolationRef = db.ref(`Violations_Log/${userId}`).push();
+        await newViolationRef.set({
+            timestamp: Date.now(),
+            reason: reason,
+            strikeCount: strikes
+        });
+
+        // 4. Update Summary
+        let isBanned = false;
+        if (strikes >= 3) {
+            isBanned = true;
+            // Ban the user
+            await db.ref(`Profile_Details/${userId}`).update({
+                IsBanned: true,
+                BanReason: "Repeated Violations: Sharing Contact Info"
+            });
+            await db.ref(`BroadCast/${userId}`).update({
+                IsBanned: true
+            });
+            console.log(`🚨 User ${userId} BANNED due to 3 strikes.`);
+        }
+
+        await violationsRef.update({
+            strikes: strikes,
+            lastViolation: Date.now(),
+            isBanned: isBanned
+        });
+
+        console.log(`[VIOLATION] User ${userId} -> Strike ${strikes}/3. Reason: ${reason}`);
+
+        return res.json({ success: true, strikes: strikes, isBanned: isBanned });
+
+    } catch (e) {
+        console.error("Violation Update Error:", e);
+        return res.status(500).json({ error: "Database Error" });
+    }
+});
+
+const createToken = async (roomName, userId, role, name, metadata, appId, webhook) => {
+    const metaObj = {
+        role: metadata,
+        appId: appId,
+        webhook: webhook
+    };
+    const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
+        identity: userId,
+        name: name,
+        metadata: JSON.stringify(metaObj) // Store as JSON string in metadata
+    });
     const isHost = role === 'host';
     at.addGrant({ roomJoin: true, room: roomName, canPublish: isHost, canSubscribe: true, canPublishData: isHost });
     return await at.toJwt();

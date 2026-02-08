@@ -57,6 +57,9 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     private var pricePerMin = 20
 
     private val REQUEST_PERMISSION_CODE = 1001
+    
+    // Track if violation dialog is currently showing
+    private var isViolationDialogShowing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -171,13 +174,27 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             }
             
             override fun onDataReceived(data: String) {
-               if (data.startsWith("SYNC_TIME:")) {
+                if (data.startsWith("SYNC_TIME:")) {
                     val remoteSeconds = data.substringAfter("SYNC_TIME:").toLongOrNull()
                     if (remoteSeconds != null) {
                         runOnUiThread {
                             updateTimerUI(remoteSeconds)
                         }
                     }
+                } else {
+                    // Handle AI Signals
+                    try {
+                        val json = org.json.JSONObject(data)
+                        if (json.optString("type") == "SUGUNA_SIGNAL") {
+                            val action = json.optString("action")
+                            val targetId = json.optString("target_id")
+                            
+                            val isTargetMe = targetId.trim().equals(localUserId.trim(), ignoreCase = true)
+                            runOnUiThread {
+                                handleAiSignal(json, isTargetMe)
+                            }
+                        }
+                    } catch (e: Exception) {}
                 }
             }
 
@@ -514,7 +531,127 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         }
     }
 
+    private fun handleAiSignal(json: org.json.JSONObject, isTargetMe: Boolean) {
+        val action = json.optString("action")
+        val strikes = json.optInt("strike_count", 0)
+        val reason = json.optString("reason", "Violation detected")
+        val message = json.optString("message", "")
+
+        when (action) {
+            "VIOLATION_SIGNAL" -> {
+                showViolationDialog(strikes, reason, message, isTargetMe)
+            }
+        }
+    }
+
+    private fun showViolationDialog(strikes: Int, reason: String, message: String, isTargetMe: Boolean) {
+        // Prevent multiple dialogs from showing at once
+        if (isViolationDialogShowing) {
+            android.util.Log.d("SugunaCall", "Violation dialog already showing, ignoring new signal")
+            return
+        }
+        
+        isViolationDialogShowing = true
+        
+        val builder = androidx.appcompat.app.AlertDialog.Builder(this@SugunaAudioCallActivity)
+        builder.setCancelable(false)
+        
+        val title = if (isTargetMe) "Security Warning" else "Partner Violation Warning"
+        val displayMessage = message.ifEmpty { "Violation: $reason. Strike $strikes/3" }
+
+        // Logic for Non-Target User (Sender) - Only Warning
+        if (!isTargetMe) {
+             builder.setTitle(title)
+             builder.setMessage("Your partner violated safety rules ($reason).\nStrike $strikes/3 issued to them.")
+             builder.setPositiveButton("OK") { _, _ -> 
+                 isViolationDialogShowing = false 
+             }
+             builder.create().show()
+             return
+        }
+
+        // --- Logic for Target (Receiver) - Penalties Apply ---
+        builder.setTitle(title)
+        builder.setMessage(displayMessage)
+
+        when (strikes) {
+            1 -> {
+                // Strike 1: 30 Seconds Mute + Countdown
+                sugunaClient.setMicrophoneEnabled(false)
+                isMuted = true
+                btnMute.setBackgroundResource(R.drawable.bg_control_danger_glass)
+                btnMute.setImageResource(R.drawable.ic_mic_off)
+                
+                builder.setMessage("$displayMessage\n\nYour microphone is muted for 30 seconds.")
+                
+                val dialog = builder.create()
+                dialog.show()
+
+                // Countdown Timer for the Dialog & Unmute
+                val timerTextView = dialog.findViewById<TextView>(android.R.id.message)
+                
+                object : android.os.CountDownTimer(30000, 1000) {
+                    override fun onTick(millisUntilFinished: Long) {
+                        val secondsRemaining = millisUntilFinished / 1000
+                        timerTextView?.text = "$displayMessage\n\nMicrophone muted: ${secondsRemaining}s remaining."
+                    }
+
+                    override fun onFinish() {
+                        sugunaClient.setMicrophoneEnabled(true)
+                        isMuted = false
+                        btnMute.setBackgroundResource(R.drawable.bg_control_glass)
+                        btnMute.setImageResource(R.drawable.ic_mic_on)
+                        dialog.dismiss()
+                        isViolationDialogShowing = false // Reset flag
+                        Toast.makeText(this@SugunaAudioCallActivity, "Microphone Restored", Toast.LENGTH_SHORT).show()
+                    }
+                }.start()
+            }
+            2 -> {
+                // Strike 2: Last Warning -> End Call
+                builder.setTitle("LAST WARNING")
+                builder.setMessage("Violation detected. Call will end in 5 seconds.")
+                builder.setPositiveButton("End Call Now") { _, _ -> 
+                    isViolationDialogShowing = false
+                    endCall() 
+                }
+                val dialog = builder.create()
+                dialog.show()
+                
+                // Auto-end call after 5 seconds
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (dialog.isShowing) {
+                        dialog.dismiss()
+                        isViolationDialogShowing = false
+                        endCall()
+                    }
+                }, 5000)
+            }
+            3 -> {
+                // Strike 3: Banned -> End Call
+                builder.setTitle("ACCOUNT BANNED")
+                builder.setMessage("Your account has been permanently banned. Call ending...")
+                builder.setPositiveButton("Exit") { _, _ -> 
+                    isViolationDialogShowing = false
+                    endCall() 
+                }
+                val dialog = builder.create()
+                dialog.show()
+                
+                // Auto-end call after 5 seconds
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (dialog.isShowing) {
+                        dialog.dismiss()
+                        isViolationDialogShowing = false
+                        endCall()
+                    }
+                }, 5000)
+            }
+        }
+    }
+
     override fun onBackPressed() {
+        super.onBackPressed()
         // 🛑 Block Back Press: User must click "End Call" button to exit.
         // This ensures the call logic (cleanup, credits, etc.) is handled via endCall().
     }
