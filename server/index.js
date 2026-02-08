@@ -286,7 +286,7 @@ io.on('connection', (socket) => {
             if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
 
             if (roomId) {
-                tenantManager.updateCallStatus(appId, roomId, "Declined");
+                tenantManager.updateCallStatus(appId, roomId, "Decline");
             }
 
             // Trigger Webhook for Declined/Rejected Call
@@ -318,7 +318,7 @@ io.on('connection', (socket) => {
             if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
 
             if (roomId) {
-                tenantManager.updateCallStatus(appId, roomId, "No Answer");
+                tenantManager.updateCallStatus(appId, roomId, "Missed Call");
             }
 
             // Trigger Webhook for Missed Call (Silent Timeout)
@@ -333,6 +333,37 @@ io.on('connection', (socket) => {
         const targetData = userSocketMap.get(targetUserId);
         if (targetData) {
             io.to(targetData.socketId).emit("call_rejected", { from: userId, roomId });
+        }
+    });
+
+    socket.on("call_timeout_sender", (data) => {
+        const { targetUserId, roomId } = data; // targetUserId is Receiver
+        const userId = socket.userId; // Caller (Timeout)
+        const appId = socket.appId || "friendzone_001";
+        const tenant = tenantManager.getApp(appId);
+
+        console.log(`[CallTimeoutSender] ${userId} / ${targetUserId} (Room: ${roomId})`);
+
+        if (tenant) {
+            const db = admin.database(tenant.firebaseApp);
+            db.ref(`BroadCast/${userId}`).update({ isBusy: false });
+            if (targetUserId) db.ref(`BroadCast/${targetUserId}`).update({ isBusy: false });
+
+            if (roomId) {
+                tenantManager.updateCallStatus(appId, roomId, "Missed Call");
+            }
+
+            tenantManager.sendWebhook(appId, {
+                event: 'CALL_MISSED',
+                roomId: roomId,
+                userId: userId, // Caller
+                receiverId: targetUserId // Receiver
+            });
+        }
+
+        const targetData = userSocketMap.get(targetUserId);
+        if (targetData) {
+            io.to(targetData.socketId).emit("call_cancelled", { from: userId, roomId });
         }
     });
 

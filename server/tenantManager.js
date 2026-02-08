@@ -69,19 +69,13 @@ class TenantManager {
                     const roomTag = `room_${sortedIds[0]}_${sortedIds[1]}`;
 
                     const message = {
-                        // notification: {
-                        //     title: "Incoming Call",
-                        //     body: `${callData.senderName} is calling you...`,
-                        //     // Tag allows system to replace existing notification with same tag
-                        //     // Also used to cancel it programmatically if possible
-                        // },
                         data: {
                             type: "SugunaCall",
                             senderId: callData.senderUserId,
                             senderName: callData.senderName,
                             senderImage: callData.senderImage,
                             callType: callData.callType,
-                            callId: roomTag,
+                            callId: callData.roomName, // Use actual roomName from Caller side
                             appId: appId
                         },
                         token: rawToken,
@@ -186,7 +180,7 @@ class TenantManager {
                 updates.AnswerTime = Encryption.encrypt(now);
             }
 
-            if (["Ended", "Declined", "No Answer", "Cancelled", "Rejected"].includes(status)) {
+            if (["Ended", "Declined", "Decline", "No Answer", "Missed Call", "Cancelled", "Rejected"].includes(status)) {
                 const now = Date.now().toString();
                 updates.EndTime = Encryption.encrypt(now);
 
