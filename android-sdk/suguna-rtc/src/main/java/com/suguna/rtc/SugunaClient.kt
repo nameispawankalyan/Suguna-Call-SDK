@@ -6,16 +6,17 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.LocalParticipant
+import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import android.media.AudioManager
-import android.media.AudioDeviceInfo
 import livekit.org.webrtc.RendererCommon
 import livekit.org.webrtc.EglBase
-import android.widget.Toast
+import io.livekit.android.LiveKitOverrides
+import io.livekit.android.room.track.LocalVideoTrack
 
 class SugunaClient(private val context: Context, private val serverUrl: String) {
 
@@ -30,7 +31,7 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
         const val ROLE_HOST = "host"
         const val ROLE_AUDIENCE = "audience"
         
-        private val eglBase by lazy { EglBase.create() }
+        internal val eglBase by lazy { EglBase.create() }
 
         @JvmStatic
         fun attachTrackToView(
@@ -39,14 +40,12 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
             isLocal: Boolean
         ) {
             view.post {
-                System.out.println("DEBUG: Attaching Track. Enabled=${track.enabled}")
-                Toast.makeText(view.context, "Render: $isLocal", Toast.LENGTH_SHORT).show()
+                android.util.Log.d("SugunaClient", "Attaching track: ${track.sid}, isLocal: $isLocal, enabled: ${track.enabled}")
                 
                 view.safeInit(eglBase.eglBaseContext)
                 view.setMirror(isLocal)
                 view.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
-                view.setEnableHardwareScaler(true) /* Force Hardware Scaler */
-
+                
                 track.removeRenderer(view)
                 track.addRenderer(view)
                 
@@ -57,12 +56,13 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     }
 
     interface SugunaEvents {
-        fun onConnected(userId: String) // ✅ Added to get authoritative Local ID
+        fun onConnected(userId: String) 
         fun onLocalStreamReady(videoTrack: VideoTrack)
         fun onRemoteStreamReady(userId: String?, videoTrack: VideoTrack)
+        fun onLocalStreamUpdate(videoTrack: VideoTrack, isMuted: Boolean) // Added for Mute/Unmute
+        fun onRemoteStreamUpdate(userId: String?, videoTrack: VideoTrack, isMuted: Boolean) // Added for Mute/Unmute
         fun onUserJoined(participant: io.livekit.android.room.participant.RemoteParticipant)
         fun onUserLeft(userId: String?)
-        // New Event: Active Speaker
         fun onActiveSpeakerChanged(speakers: List<String>) 
         fun onDataReceived(data: String)
         fun onError(message: String)
@@ -75,15 +75,23 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     fun initialize(token: String, role: String, isVideoCall: Boolean = true, defaultSpeakerOn: Boolean? = null) {
         scope.launch {
             try {
-                // Initialize Room (Standard VoIP for Earpiece/Bluetooth support)
-                room = LiveKit.create(context)
+                // Initialize Room with Shared EglBase
+                val overrides = LiveKitOverrides(
+                    eglBase = eglBase
+                )
+                
+                room = LiveKit.create(
+                    appContext = context,
+                    overrides = overrides
+                )
+                
                 setupRoomListeners()
 
                 // Connect
                 room?.connect(serverUrl, token)
                 
-                // ✅ Notify Activity of the Actual Local ID
                 val myIdentity = room?.localParticipant?.identity?.value ?: ""
+                android.util.Log.d("SugunaClient", "Connected to room as: $myIdentity")
                 eventListener?.onConnected(myIdentity)
                 
                 // Trigger for already connected participants (if any)
@@ -91,7 +99,7 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                     eventListener?.onUserJoined(participant)
                 }
                 
-                // Configure Audio Mode - Must be COMMUNICATION for Earpiece/BT Routing
+                // Configure Audio Mode
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 
                 // Default Speaker Logic
@@ -99,23 +107,47 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                 setSpeakerphoneEnabled(initialSpeakerState)
                 
                 if (role == ROLE_HOST) {
-                    // Check Permission First
-                    if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                         eventListener?.onError("Mic Permission Missing!")
-                         return@launch
-                    }
-                    
-                    if (isVideoCall && context.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                         eventListener?.onError("Camera Permission Missing!")
+                    if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                        (isVideoCall && context.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED)) {
+                         eventListener?.onError("Permissions Missing!")
                          return@launch
                     }
 
                     room?.localParticipant?.setMicrophoneEnabled(true)
                     if (isVideoCall) {
+                        android.util.Log.d("SugunaClient", "Enabling Camera for Local Participant")
                         room?.localParticipant?.setCameraEnabled(true)
+                        
+                        // Reliability: Explicitly poll for the local camera track
+                        scope.launch {
+                            android.util.Log.d("SugunaClient", "Starting local track polling...")
+                            repeat(50) { // Check for 10 seconds
+                                val publications = room?.localParticipant?.videoTrackPublications
+                                val cameraPub = publications?.find { it.first.source == Track.Source.CAMERA }
+                                val track = cameraPub?.second as? VideoTrack
+                                
+                                if (track != null) {
+                                    android.util.Log.d("SugunaClient", "Local Camera Track Found via polling. Enabled=${track.enabled}")
+                                    if (!track.enabled) {
+                                        android.util.Log.d("SugunaClient", "Forcing track enable")
+                                        track.enabled = true
+                                    }
+                                    
+                                    // Start capture if it's a local video track
+                                    if (track is LocalVideoTrack) {
+                                        track.startCapture()
+                                    }
+                                    
+                                    eventListener?.onLocalStreamReady(track)
+                                    return@launch
+                                }
+                                kotlinx.coroutines.delay(200)
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
+                android.util.Log.e("SugunaClient", "Connect Error", e)
                 eventListener?.onError("SDK Init Error: ${e.message}")
             }
         }
@@ -133,21 +165,37 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     }
     
     fun setSpeakerphoneEnabled(enable: Boolean) {
-        // Enforce Communication Mode for correct routing
-        if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        }
-        
-        if (enable) {
-            // Speaker Requested: Turn off BT SCO, Turn ON Speaker
-            audioManager.stopBluetoothSco()
-            audioManager.isBluetoothScoOn = false
-            audioManager.isSpeakerphoneOn = true
-        } else {
-            // Earpiece/BT Requested: Turn OFF Speaker, Enable BT SCO if available
-            audioManager.isSpeakerphoneOn = false
-            audioManager.startBluetoothSco()
-            audioManager.isBluetoothScoOn = true
+        android.util.Log.d("SugunaClient", "Setting speakerphone enabled: $enable")
+        try {
+            // Enforce Communication Mode for correct routing
+            if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            }
+            
+            if (enable) {
+                // Speaker Requested: Turn off BT SCO, Turn ON Speaker
+                audioManager.stopBluetoothSco()
+                audioManager.isBluetoothScoOn = false
+                audioManager.isSpeakerphoneOn = true
+                android.util.Log.d("SugunaClient", "Audio routed to SPEAKER")
+            } else {
+                // Earpiece/BT Requested: Turn OFF Speaker
+                audioManager.isSpeakerphoneOn = false
+                
+                // Only start Bluetooth SCO if a headset is actually connected
+                val isBluetoothConnected = audioManager.isBluetoothA2dpOn || audioManager.isBluetoothScoAvailableOffCall
+                if (isBluetoothConnected) {
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                    android.util.Log.d("SugunaClient", "Audio routed to BLUETOOTH")
+                } else {
+                    audioManager.stopBluetoothSco()
+                    audioManager.isBluetoothScoOn = false
+                    android.util.Log.d("SugunaClient", "Audio routed to EARPIECE")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SugunaClient", "Error setting audio route", e)
         }
     }
 
@@ -190,6 +238,28 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                         eventListener?.onDataReceived(message)
                     }
 
+                    // ✅ TRACK MUTE/UNMUTE (Crucial for Background/Foreground Resume)
+                    is RoomEvent.TrackMuted -> {
+                        val track = event.publication.track
+                        if (track is VideoTrack) {
+                            if (event.participant is LocalParticipant) {
+                                eventListener?.onLocalStreamUpdate(track, true)
+                            } else {
+                                eventListener?.onRemoteStreamUpdate(event.participant.identity?.value, track, true)
+                            }
+                        }
+                    }
+                    is RoomEvent.TrackUnmuted -> {
+                        val track = event.publication.track
+                        if (track is VideoTrack) {
+                            if (event.participant is LocalParticipant) {
+                                eventListener?.onLocalStreamUpdate(track, false)
+                            } else {
+                                eventListener?.onRemoteStreamUpdate(event.participant.identity?.value, track, false)
+                            }
+                        }
+                    }
+
                     is RoomEvent.ParticipantDisconnected -> {
                         eventListener?.onUserLeft(event.participant.identity?.value)
                     }
@@ -205,6 +275,13 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
 
     fun setCameraEnabled(enabled: Boolean) {
         scope.launch { room?.localParticipant?.setCameraEnabled(enabled) }
+    }
+
+    fun switchCamera() {
+        val videoPub = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)
+        val videoTrack = videoPub?.track as? LocalVideoTrack
+        val capturer = videoTrack?.capturer as? livekit.org.webrtc.CameraVideoCapturer
+        capturer?.switchCamera(null)
     }
 
     fun leaveRoom() {
