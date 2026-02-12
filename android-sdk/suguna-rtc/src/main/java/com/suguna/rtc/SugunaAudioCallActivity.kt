@@ -434,6 +434,13 @@ class SugunaAudioCallActivity : AppCompatActivity() {
 
     private fun forceSpeakerOutput(enable: Boolean) {
         try {
+            // 1. Tell ConnectionService (System) to switch route
+            val routeIntent = Intent("com.suguna.rtc.ACTION_REQUEST_AUDIO_ROUTE")
+            routeIntent.putExtra("IS_SPEAKER", enable)
+            routeIntent.setPackage(packageName)
+            sendBroadcast(routeIntent)
+
+            // 2. Local AudioManager manipulation (Backup/Overlay)
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
             
             // Ensure Communication Mode

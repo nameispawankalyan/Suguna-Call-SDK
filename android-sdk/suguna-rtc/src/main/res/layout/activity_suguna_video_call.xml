@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#000000" android:keepScreenOn="true" android:id="@+id/rootLayout" android:fitsSystemWindows="false">
+
+    <!-- Remote Video (Full Screen) -->
+    <com.suguna.rtc.SugunaVideoView android:id="@+id/videoRemote" android:layout_width="match_parent" android:layout_height="match_parent" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toTopOf="parent" android:fitsSystemWindows="false" />
+
+    <!-- Local Video (Self View - PIP) - Moved here so UI overlays it -->
+    <androidx.cardview.widget.CardView android:id="@+id/cardLocalVideo" android:layout_width="100dp" android:layout_height="140dp" android:layout_marginEnd="16dp" android:layout_marginBottom="200dp" app:cardBackgroundColor="#000000" app:cardCornerRadius="16dp" app:cardElevation="8dp" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintBottom_toBottomOf="parent">
+        <com.suguna.rtc.SugunaVideoView android:id="@+id/videoLocal" android:layout_width="match_parent" android:layout_height="match_parent" />
+    </androidx.cardview.widget.CardView>
+
+    <!-- Gradient Overlay for Visibility -->
+    <View android:id="@+id/overlayTop" android:layout_width="match_parent" android:layout_height="200dp" android:background="@drawable/gradient_fade_top" app:layout_constraintTop_toTopOf="parent" />
+
+    <View android:id="@+id/overlayBottom" android:layout_width="match_parent" android:layout_height="200dp" android:background="@drawable/gradient_fade_bottom" app:layout_constraintBottom_toBottomOf="parent" />
+
+    <!-- UI Overlay Container (Toggled on click) - High elevation to stay on top of PIP -->
+    <androidx.constraintlayout.widget.ConstraintLayout android:id="@+id/uiContainer" android:layout_width="match_parent" android:layout_height="match_parent" android:elevation="20dp" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Top Header: End-to-End Encrypted -->
+        <LinearLayout android:id="@+id/headerEncrypted" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="40dp" android:background="@drawable/bg_glass_panel_dark" android:gravity="center_vertical" android:orientation="horizontal" android:paddingHorizontal="12dp" android:paddingVertical="6dp" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView android:layout_width="12dp" android:layout_height="12dp" android:src="@drawable/ic_lock_filled" app:tint="#E6FFFFFF" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="End-to-end Encrypted" android:textColor="#E6FFFFFF" android:textSize="12sp" android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Title: Suguna Calling -->
+        <TextView android:id="@+id/appTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Suguna Calling" android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@id/headerEncrypted" />
+
+        <!-- Remote Name -->
+        <TextView android:id="@+id/tvRemoteName" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:gravity="center" android:text="Processing..." android:textColor="#FFFFFF" android:textSize="22sp" android:textStyle="bold" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@id/appTitle" />
+
+        <!-- Timer -->
+        <TextView android:id="@+id/tvDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="@drawable/bg_glass_panel_light" android:paddingHorizontal="16dp" android:paddingVertical="4dp" android:text="00:00" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@id/tvRemoteName" />
+
+        <!-- Add Coins Button (Sender Only) -->
+        <LinearLayout android:id="@+id/btnAddCoins" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginTop="20dp" android:background="@drawable/bg_btn_gold_rounded" android:elevation="6dp" android:gravity="center" android:orientation="horizontal" android:paddingHorizontal="24dp" android:visibility="gone" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@id/tvDuration">
+
+            <ImageView android:layout_width="16dp" android:layout_height="16dp" android:layout_marginEnd="8dp" android:src="@android:drawable/ic_input_add" app:tint="#000000" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Add Coins" android:textColor="#000000" android:textSize="14sp" android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Controls & Secured Badge Wrapper (Bottom) -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center" android:paddingBottom="40dp" app:layout_constraintBottom_toBottomOf="parent">
+
+            <!-- Main Controls -->
+            <LinearLayout android:id="@+id/controls" android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center" android:orientation="horizontal" android:layout_marginBottom="24dp">
+
+                <ImageButton android:id="@+id/btnEndCall" android:layout_width="65dp" android:layout_height="65dp" android:background="@drawable/bg_circle_red_button" android:padding="18dp" android:src="@drawable/ic_call_end" app:tint="#FFFFFF" android:layout_marginEnd="30dp"/>
+
+                <ImageButton android:id="@+id/btnMute" android:layout_width="55dp" android:layout_height="55dp" android:layout_marginEnd="30dp" android:background="@drawable/bg_circle_glass_button" android:padding="14dp" android:src="@drawable/ic_mic_on" app:tint="#FFFFFF" />
+
+                <ImageButton android:id="@+id/btnSwitchCamera" android:layout_width="55dp" android:layout_height="55dp" android:background="@drawable/bg_circle_glass_button" android:padding="14dp" android:src="@android:drawable/ic_menu_camera" app:tint="#FFFFFF" />
+
+            </LinearLayout>
+
+            <!-- Secured Badge -->
+            <LinearLayout android:id="@+id/layoutSecured" android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center" android:orientation="horizontal">
+
+                <ImageView android:layout_width="14dp" android:layout_height="14dp" android:src="@drawable/ic_verified_badge" app:tint="#4CAF50"/>
+
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Secured by Suguna Calling" android:textColor="#CCFFFFFF" android:textSize="12sp" android:layout_marginStart="6dp"/>
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+
+</androidx.constraintlayout.widget.ConstraintLayout>

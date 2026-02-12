@@ -67,6 +67,24 @@ class RoomManager {
         const session = this.sessions.get(roomId);
         if (!session) return;
 
+        // 0. Check if room still exists in LiveKit (Prevention for hanging sessions)
+        // Skip check for initial deduction as room might not be created yet
+        if (!isInitial) {
+            try {
+                const rooms = await svc.listRooms([roomId]);
+                if (!rooms || rooms.length === 0) {
+                    console.log(`Room ${roomId} no longer exists in LiveKit. Stopping monitor.`);
+                    this.stopMonitoring(roomId);
+                    return;
+                }
+            } catch (e) {
+                console.error(`Error checking room ${roomId}:`, e.message);
+                // On API error, we might want to continue or stop? 
+                // Let's just log and continue for now to be safe, or stop?
+                // If the API itself fails (e.g. timeout), we shouldn't kill the call.
+            }
+        }
+
         if (!isInitial) session.elapsedMinutes += 1;
         const amountToDeduct = session.price;
 
