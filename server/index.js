@@ -12,9 +12,186 @@ const roomManager = require('./roomManager');
 // 1. Initialize Firebase & Tenants
 tenantManager.initialize();
 
+const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname)));
+
+// --- ADMIN DASHBOARD APIs ---
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dashboard.html'));
+});
+
+app.get('/admin/lib/livekit.js', (req, res) => {
+    const fs = require('fs');
+    const filePath = path.join(__dirname, 'livekit-client.js');
+    console.log(`[LibraryRequest] Requested from IP: ${req.ip}`);
+    if (fs.existsSync(filePath)) {
+        res.type('application/javascript');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        res.sendFile(filePath);
+    } else {
+        console.error(`[LibraryError] File not found at: ${filePath}`);
+        res.status(404).send('LiveKit Library not found on server');
+    }
+});
+
+app.post('/api/admin/end-room', async (req, res) => {
+    try {
+        const roomName = req.query.room;
+        if (!roomName) return res.status(400).json({ error: "Room missing" });
+
+        const { RoomServiceClient } = require('livekit-server-sdk');
+        const livekitUrl = (process.env.LIVEKIT_URL || "").replace('wss://', 'https://');
+        const svc = new RoomServiceClient(livekitUrl, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+        await svc.deleteRoom(roomName);
+        
+        console.log(`[Admin] Ended Room: ${roomName}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("End Room Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/admin/active-rooms', async (req, res) => {
+    console.log(`[DashboardRequest] from IP: ${req.ip}, User-Agent: ${req.headers['user-agent']}`);
+    try {
+        const { RoomServiceClient } = require('livekit-server-sdk');
+        const livekitUrl = (process.env.LIVEKIT_URL || "").replace('wss://', 'https://');
+        const svc = new RoomServiceClient(livekitUrl, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+        
+        const rooms = await svc.listRooms();
+        console.log(`LiveKit API: Fetched ${rooms.length} rooms.`);
+        
+        // Enrich rooms with participant data
+        const enrichedRooms = await Promise.all(rooms.map(async (room) => {
+            try {
+                // Parse room metadata for callType
+                let roomMeta = {};
+                try {
+                    if (room.metadata) roomMeta = JSON.parse(room.metadata);
+                } catch(e) {}
+
+                let detectedCallType = roomMeta.callType || "";
+                const participants = await svc.listParticipants(room.name);
+
+                const enrichedParticipants = await Promise.all(participants.map(async (p) => {
+                    let metadata = {};
+                    try {
+                        if (p.metadata) {
+                            metadata = JSON.parse(p.metadata);
+                        }
+                    } catch (e) {
+                        console.error(`Metadata Parse Error [${p.identity}]:`, e.message);
+                    }
+                    
+                    if (!detectedCallType && metadata.callType) {
+                        detectedCallType = metadata.callType;
+                    }
+
+                    return {
+                        identity: p.identity,
+                        name: p.name || metadata.name || metadata.ProfileName || "User",
+                        image: metadata.image || metadata.ProfileImage || "",
+                        gender: metadata.gender || metadata.Gender || "",
+                        role: metadata.role || (metadata.isHost ? "Host" : "Participant")
+                    };
+                }));
+                
+                return { 
+                    sid: room.sid,
+                    name: room.name,
+                    creationTime: room.creationTime ? Number(room.creationTime) : 0,
+                    numParticipants: room.numParticipants ? Number(room.numParticipants) : 0,
+                    callType: detectedCallType || "Audio", // Call Type from Room or Participant Metadata
+                    participants: enrichedParticipants 
+                };
+            } catch (e) {
+                console.error(`Enrichment Failed for room ${room.name}:`, e.message);
+                return { 
+                    sid: room.sid,
+                    name: room.name,
+                    creationTime: room.creationTime ? Number(room.creationTime) : 0,
+                    numParticipants: room.numParticipants ? Number(room.numParticipants) : 0,
+                    participants: [] 
+                };
+            }
+        }));
+
+        res.json(JSON.parse(JSON.stringify({ 
+            success: true, 
+            rooms: enrichedRooms, 
+            serverTime: Date.now() 
+        }, (key, value) => typeof value === 'bigint' ? value.toString() : value)));
+    } catch (e) {
+        console.error("active-rooms API Error:", e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/admin/room-details/:roomId', async (req, res) => {
+    const { roomId } = req.params;
+    try {
+        const { RoomServiceClient } = require('livekit-server-sdk');
+        const livekitUrl = (process.env.LIVEKIT_URL || "").replace('wss://', 'https://');
+        const svc = new RoomServiceClient(livekitUrl, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+        
+        const participants = await svc.listParticipants(roomId);
+        const enrichedParticipants = await Promise.all(participants.map(async (p) => {
+            let metadata = {};
+            try { if (p.metadata) metadata = JSON.parse(p.metadata); } catch (e) {}
+            
+            let firebaseInfo = {};
+            if (!p.identity.startsWith('admin_')) {
+                const appId = metadata.appId || "friendzone_001";
+                const tenant = tenantManager.getApp(appId);
+                if (tenant) {
+                    const db = admin.database(tenant.firebaseApp);
+                    const snap = await db.ref(`Profile_Details/${p.identity}`).once('value');
+                    if (snap.exists()) {
+                        const u = snap.val();
+                        firebaseInfo = {
+                            name: Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name,
+                            image: Encryption.decrypt(u.ProfileImage) || u.ProfileImage,
+                            gender: Encryption.decrypt(u.Gender) || u.Gender
+                        };
+                    }
+                }
+            }
+            return {
+                identity: p.identity,
+                name: p.name || firebaseInfo.name,
+                image: firebaseInfo.image,
+                gender: firebaseInfo.gender,
+                metadata: metadata
+            };
+        }));
+        
+        res.json(JSON.parse(JSON.stringify({ success: true, participants: enrichedParticipants }, (key, value) => typeof value === 'bigint' ? value.toString() : value)));
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// End Room is now handled above at line 37
+
+app.post('/api/admin/spy-token', async (req, res) => {
+    const { roomId } = req.body;
+    try {
+        const { AccessToken } = require('livekit-server-sdk');
+        const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
+            identity: `admin_${Math.floor(Math.random() * 10000)}`,
+            hidden: true, // Make admin invisible in the room
+        });
+        at.addGrant({ roomJoin: true, room: roomId, canPublish: false, canSubscribe: true });
+        res.json({ success: true, token: await at.toJwt(), url: process.env.LIVEKIT_URL });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -368,37 +545,65 @@ io.on('connection', (socket) => {
     });
 
     socket.on("accept_call", async (data) => {
-        const { senderUserId, callType, webhookUrl, pricePerMin, roomId } = data;
+        console.log("FULL accept_call data:", JSON.stringify(data, null, 2));
+        const { senderUserId, callType, webhookUrl, pricePerMin, roomId, gender } = data;
+        
+        // Try multiple possible keys for name and image
+        let sName = data.senderName || data.name || data.userName || data.ProfileName;
+        let sImg = data.senderImage || data.image || data.userImage || data.ProfileImage;
+        let rName = data.receiverName || data.rName || data.name || data.ProfileName;
+        let rImg = data.receiverImage || data.rImage || data.image || data.ProfileImage;
+
         const receiverUserId = socket.userId;
         const appId = socket.appId || "friendzone_001";
+
+        // FALLBACK: If names are missing, try Firebase (User's app might not be sending them yet)
+        if (!sName || !rName) {
+            try {
+                const tenant = tenantManager.getApp(appId);
+                if (tenant) {
+                    const db = admin.database(tenant.firebaseApp);
+                    const [sSnap, rSnap] = await Promise.all([
+                        db.ref(`Profile_Details/${senderUserId}`).once('value'),
+                        db.ref(`Profile_Details/${receiverUserId}`).once('value')
+                    ]);
+                    if (!sName && sSnap.exists()) {
+                        const u = sSnap.val();
+                        sName = Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name;
+                        if (!sImg) sImg = Encryption.decrypt(u.ProfileImage) || u.ProfileImage;
+                    }
+                    if (!rName && rSnap.exists()) {
+                        const u = rSnap.val();
+                        rName = Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name;
+                        if (!rImg) rImg = Encryption.decrypt(u.ProfileImage) || u.ProfileImage;
+                    }
+                }
+            } catch (e) {
+                console.error("Firebase Fallback Error:", e.message);
+            }
+        }
+
+        sName = sName || "Caller";
+        rName = rName || "Receiver";
+        sImg = sImg || "";
+        rImg = rImg || "";
+
         const roomName = roomId || `room_${[senderUserId, receiverUserId].sort().join('_')}`;
 
         try {
             tenantManager.updateCallStatus(appId, roomName, "Answered");
 
-            let senderName = "Caller";
-            let receiverName = "Receiver";
-
-            const tenant = tenantManager.getApp(appId);
-            if (tenant) {
-                const db = admin.database(tenant.firebaseApp);
-                const [senderSnap, receiverSnap] = await Promise.all([
-                    db.ref(`Profile_Details/${senderUserId}`).once('value'),
-                    db.ref(`Profile_Details/${receiverUserId}`).once('value')
-                ]);
-
-                if (senderSnap.exists()) {
-                    const u = senderSnap.val();
-                    senderName = Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name || "Caller";
-                }
-                if (receiverSnap.exists()) {
-                    const u = receiverSnap.val();
-                    receiverName = Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name || "Receiver";
-                }
+            try {
+                const { RoomServiceClient } = require('livekit-server-sdk');
+                const livekitUrl = (process.env.LIVEKIT_URL || "").replace('wss://', 'https://');
+                const svc = new RoomServiceClient(livekitUrl, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+                await svc.updateRoomMetadata(roomName, JSON.stringify({ callType: callType || "Audio" }));
+            } catch (metaErr) {
+                console.warn(`Room metadata update skipped (Room might not exist yet): ${metaErr.message}`);
             }
 
-            const senderToken = await createToken(roomName, senderUserId, 'host', senderName, "sender", appId, webhookUrl);
-            const receiverToken = await createToken(roomName, receiverUserId, 'host', receiverName, "receiver", appId, webhookUrl);
+            const senderToken = await createToken(roomName, senderUserId, 'host', sName, "sender", appId, webhookUrl, sImg, gender, callType);
+            const receiverToken = await createToken(roomName, receiverUserId, 'host', rName, "receiver", appId, webhookUrl, rImg, gender, callType);
 
             if (webhookUrl) {
                 roomManager.startMonitoring(roomName, senderUserId, webhookUrl, pricePerMin || 20, appId, callType, receiverUserId);
@@ -496,11 +701,14 @@ app.post('/api/violation', async (req, res) => {
     }
 });
 
-const createToken = async (roomName, userId, role, name, metadata, appId, webhook) => {
+const createToken = async (roomName, userId, role, name, metadata, appId, webhook, image, gender, callType) => {
     const metaObj = {
         role: metadata,
         appId: appId,
-        webhook: webhook
+        webhook: webhook,
+        image: image || "",
+        gender: gender || "",
+        callType: callType || "Audio"
     };
     const at = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
         identity: userId,

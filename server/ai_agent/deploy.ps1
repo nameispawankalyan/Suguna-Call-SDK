@@ -1,7 +1,7 @@
-$ServerIP = "YOUR_SERVER_IP"
-$KeyPath = "C:\PATH\TO\YOUR_KEY.pem"
+$ServerIP = "3.108.6.8"
+$KeyPath = "c:\Users\ramch\OneDrive\Desktop\Suguna_AI_Key.pem"
 $RemoteUser = "ubuntu"
-$LocalPath = "C:\PATH\TO\suguna-rtc\server\ai_agent"
+$LocalPath = "c:\Users\ramch\OneDrive\Desktop\SugunaCallingSDK\server\ai_agent"
 $ErrorActionPreference = "Stop"
 
 Write-Host "Starting Deployment..." -ForegroundColor Cyan
@@ -13,7 +13,8 @@ try {
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, "FullControl", "Allow")
     $acl.SetAccessRule($rule)
     Set-Acl $KeyPath $acl
-} catch {
+}
+catch {
     Write-Host "Skipping permission fix (might already be okay)..." -ForegroundColor Yellow
 }
 

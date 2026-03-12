@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suguna Live Monitor | Admin Dashboard</title>
+    <!-- Aggressive Static + Fallback Loader -->
+    <script id="lk-source-local" src="/admin/lib/livekit.js"></script>
+    <script>
+        window.LK_STATUS = "Loading...";
+        window.LK_STAGE = "Checking local library...";
+        window._LK_FINAL = null;
+
+        function findLK() {
+            const lib = window.LiveKit || window.LiveKitClient || 
+                        (window.livekit ? (window.livekit.LiveKit || window.livekit.LiveKitClient || window.livekit) : null);
+            if (lib && (lib.Room || lib.connect)) {
+                window._LK_FINAL = lib;
+                window.LiveKit = lib; 
+                window.LK_STATUS = "Ready";
+                window.LK_STAGE = "Stable Version Verified";
+                return true;
+            }
+            return false;
+        }
+
+        let lkAttempts = 0;
+        const lkInterval = setInterval(() => {
+            lkAttempts++;
+            if (findLK()) {
+                clearInterval(lkInterval);
+                return;
+            }
+
+            if (lkAttempts === 10) { // After 5s, try CDN 1
+                window.LK_STAGE = "Local failed, trying CDN 1...";
+                const s = document.createElement('script');
+                s.src = "https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js";
+                document.head.appendChild(s);
+            }
+            
+            if (lkAttempts === 20) { // After 10s, try CDN 2
+                window.LK_STAGE = "CDN 1 failed, trying CDN 2...";
+                const s = document.createElement('script');
+                s.src = "https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js";
+                document.head.appendChild(s);
+            }
+
+            if (lkAttempts > 30) {
+                clearInterval(lkInterval);
+                if (!findLK()) {
+                    window.LK_STATUS = "Failed";
+                    window.LK_STAGE = "All sources blocked. Try Refresh (Ctrl+F5)";
+                }
+            }
+        }, 500);
+
+        function getLK() {
+            findLK(); 
+            return window._LK_FINAL;
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #00f2fe;
+            --secondary: #4facfe;
+            --bg-dark: #080a0c;
+            --card-bg: #111418;
+            --danger: #ff4b2b;
+            --success: #00f2fe;
+            --glass: rgba(255, 255, 255, 0.05);
+        }
+
+        * { margin:0; padding:0; box-sizing:border-box; font-family: 'Outfit', sans-serif; }
+        body { background: var(--bg-dark); color: #fff; overflow-x: hidden; }
+
+        /* --- LAYOUT --- */
+        .app-container { display: flex; min-height: 100vh; }
+        .sidebar { width: 260px; background: #0c0f12; padding: 30px 20px; border-right: 1px solid rgba(255,255,255,0.05); }
+        .main-content { flex:1; padding: 40px; }
+
+        /* --- DASHBOARD ELEMENTS --- */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 25px; margin-bottom: 40px; }
+        .stat-card { background: var(--card-bg); padding: 30px; border-radius: 20px; border-left: 4px solid var(--primary); }
+        .stat-card h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 10px; }
+        .stat-card .value { font-size: 36px; font-weight: 700; }
+
+        /* --- TABLE --- */
+        .table-container { background: var(--card-bg); border-radius: 24px; padding: 30px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 15px; color: #888; font-weight: 400; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        td { padding: 20px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+        .participant-bundle { display: flex; flex-direction: column; gap: 8px; }
+        .participant { display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 12px; width: fit-content; }
+        .participant img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--primary); }
+        .p-info { display: flex; flex-direction: column; }
+        .p-name { font-size: 13px; font-weight: 600; }
+        .p-role { font-size: 10px; color: #888; text-transform: uppercase; }
+
+        .badge { padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+        .badge-live { background: rgba(0, 242, 254, 0.1); color: var(--primary); border: 1px solid var(--primary); }
+        .badge-video { background: rgba(79, 172, 254, 0.1); color: #4facfe; border: 1px solid #4facfe; }
+        .badge-audio { background: rgba(255, 255, 255, 0.1); color: #ccc; border: 1px solid #ccc; }
+
+        .btn-spy { background: rgba(79, 172, 254, 0.2); color: #4facfe; border: 1px solid #4facfe; padding: 8px 16px; border-radius: 10px; cursor: pointer; transition: 0.3s; }
+        .btn-spy:hover { background: #4facfe; color: #fff; }
+
+        /* --- FULL SCREEN SPY MODAL --- */
+        #spy-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background: #000;
+            z-index: 10000;
+        }
+
+        .spy-header {
+            position: absolute;
+            top: 0; left: 0; width: 100%;
+            padding: 20px 40px;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .spy-close {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: #fff;
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .spy-viewport {
+            width: 100%;
+            height: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            background: #111;
+        }
+
+        .view-pane {
+            position: relative;
+            background: #080a0c;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .view-pane video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .audio-avatar {
+            width: 250px;
+            height: 250px;
+            border-radius: 50%;
+            border: 6px solid var(--primary);
+            object-fit: cover;
+            margin-bottom: 25px;
+            box-shadow: 0 0 50px rgba(0, 242, 254, 0.3);
+            animation: pulse-avatar 2s infinite;
+        }
+
+        @keyframes pulse-avatar {
+            0% { transform: scale(1); box-shadow: 0 0 30px rgba(0, 242, 254, 0.3); }
+            50% { transform: scale(1.05); box-shadow: 0 0 60px rgba(0, 242, 254, 0.5); }
+            100% { transform: scale(1); box-shadow: 0 0 30px rgba(0, 242, 254, 0.3); }
+        }
+
+        .view-label {
+            position: absolute;
+            bottom: 60px;
+            background: rgba(0,0,0,0.7);
+            padding: 12px 35px;
+            border-radius: 40px;
+            font-size: 24px;
+            font-weight: 700;
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+        }
+
+        .status-pill {
+            position: absolute;
+            top: 60px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .pulse { width: 10px; height: 10px; background: var(--primary); border-radius: 50%; animation: blink 1s infinite; box-shadow: 0 0 10px var(--primary); }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <h2 style="margin-bottom: 40px; color: var(--primary); display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-microchip"></i> SUGUNA
+            </h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div style="background: var(--glass); padding: 15px; border-radius: 12px; color: var(--primary);">
+                    <i class="fas fa-th-large"></i> Overview
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="header">
+                <div>
+                    <h1>Real-time Monitor</h1>
+                    <p style="color: #666;">Live tracking of active calls</p>
+                </div>
+                <div style="text-align: right;">
+                    <div class="badge badge-live">Admin Control</div>
+                    <div id="last-update" style="font-size: 11px; margin-top: 8px; color: #555;">Last Update: --:--:--</div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Active Calls</h3>
+                    <div class="value" id="count-active">0</div>
+                </div>
+                <div class="stat-card" style="border-color: #4facfe;">
+                    <h3>Total Participants</h3>
+                    <div class="value" id="count-participants">0</div>
+                </div>
+                <div class="stat-card" style="border-color: #00f2fe;">
+                    <h3>Signal Status</h3>
+                    <div class="value" style="color: var(--primary);">ONLINE</div>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <h3 style="margin-bottom: 25px;"><i class="fas fa-broadcast-tower" style="color: var(--primary);"></i> Live Calls List</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Participants Info</th>
+                            <th>Room ID</th>
+                            <th>Call Type</th>
+                            <th>Status</th>
+                            <th>Duration</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rooms-list">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- STATUS MONITOR -->
+    <div id="status-bar" style="position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.95); padding: 12px 20px; border-radius: 12px; font-size: 11px; border: 1px solid var(--primary); display: flex; flex-direction: column; gap: 5px; z-index: 20000; backdrop-filter: blur(15px); min-width: 200px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div id="status-dot" style="width: 10px; height: 10px; background: orange; border-radius: 50%;"></div>
+                <span id="status-text">Checking...</span>
+            </div>
+            <button onclick="location.reload(true)" style="background: var(--primary); color: #000; border: none; padding: 3px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 9px;">FORCE RELOAD</button>
+        </div>
+        <div id="status-details" style="color: #888; font-size: 9px; font-family: monospace;">Initializing resources...</div>
+    </div>
+
+    <!-- SPY MODAL -->
+    <div id="spy-modal">
+        <div class="spy-header">
+            <div>
+                <h2 id="spy-room-id" style="font-size: 20px;">ROOM: --</h2>
+                <div id="spy-call-type" class="badge badge-audio">AUDIO</div>
+            </div>
+            <button class="spy-close" onclick="closeSpy()"><i class="fas fa-times"></i></button>
+        </div>
+        
+        <div class="spy-viewport">
+            <!-- SENDER PANE -->
+            <div class="view-pane" id="pane-sender">
+                <div class="status-pill"><div class="pulse"></div> SENDER</div>
+                <img id="avatar-sender" class="audio-avatar" src="">
+                <div id="video-sender" style="width:100%; height:100%; display:none;"></div>
+                <div class="view-label" id="label-sender">Connecting...</div>
+            </div>
+            <!-- RECEIVER PANE -->
+            <div class="view-pane" id="pane-receiver">
+                <div class="status-pill"><div class="pulse" style="background: #4facfe;"></div> RECEIVER</div>
+                <img id="avatar-receiver" class="audio-avatar" src="">
+                <div id="video-receiver" style="width:100%; height:100%; display:none;"></div>
+                <div class="view-label" id="label-receiver">Connecting...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let lkRoom = null;
+
+        async function fetchRooms() {
+            try {
+                const res = await fetch('/api/admin/active-rooms');
+                const data = await res.json();
+                if (data.success) {
+                    updateUI(data.rooms);
+                    document.getElementById('count-active').innerText = data.rooms.length;
+                    document.getElementById('last-update').innerText = `Last Update: ${new Date().toLocaleTimeString()}`;
+                }
+            } catch (e) { console.error("Update failed", e); }
+        }
+
+        function updateUI(rooms) {
+            const list = document.getElementById('rooms-list');
+            list.innerHTML = '';
+            let totalP = 0;
+
+            rooms.forEach(room => {
+                totalP += room.numParticipants;
+                const row = document.createElement('tr');
+                
+                const sender = room.participants.find(p => p.role === 'sender') || { name: 'Caller', image: '' };
+                const receiver = room.participants.find(p => p.role === 'receiver') || { name: 'Receiver', image: '' };
+                const typeStyle = room.callType === 'Video' ? 'badge-video' : 'badge-audio';
+
+                // Fix Duration: Room creationTime is in seconds, Date.now() is in ms
+                const durationSec = Math.floor((Date.now() - (room.creationTime * 1000)) / 1000);
+                const displayDur = durationSec > 0 ? `${Math.floor(durationSec/60)}m ${durationSec%60}s` : '0m 0s';
+
+                row.innerHTML = `
+                    <td>
+                        <div class="participant-bundle">
+                            <div class="participant">
+                                <img src="${sender.image || 'https://via.placeholder.com/50'}" onerror="this.src='https://via.placeholder.com/50'">
+                                <div class="p-info"><span class="p-name">${sender.name}</span><span class="p-role">Sender</span></div>
+                            </div>
+                            <div class="participant">
+                                <img src="${receiver.image || 'https://via.placeholder.com/50'}" onerror="this.src='https://via.placeholder.com/50'">
+                                <div class="p-info"><span class="p-name">${receiver.name}</span><span class="p-role">Receiver</span></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td style="font-family: monospace; font-size: 11px; color: var(--primary);">${room.name}</td>
+                    <td><span class="badge ${typeStyle}">${room.callType || 'Audio'}</span></td>
+                    <td><span class="badge badge-success" style="font-size: 9px;">CONNECTED</span></td>
+                    <td style="font-size: 13px;">${displayDur}</td>
+                    <td>
+                        <button class="btn-spy" onclick="spyCall('${room.name}', '${room.callType}')"><i class="fas fa-eye"></i> Spy</button>
+                        <button class="btn-spy" style="background: rgba(255, 75, 43, 0.2); color: #ff4b2b; border-color: #ff4b2b; margin-left: 8px;" onclick="endCall('${room.name}')">
+                            <i class="fas fa-phone-slash"></i> End
+                        </button>
+                    </td>
+                `;
+                list.appendChild(row);
+            });
+            document.getElementById('count-participants').innerText = totalP;
+        }
+
+        async function endCall(roomId) {
+            if (!confirm("Are you sure you want to end this call?")) return;
+            try {
+                const res = await fetch(`/api/admin/end-room?room=${roomId}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) alert("Call Ended");
+                fetchRooms();
+            } catch (e) { alert("Error ending call: " + e.message); }
+        }
+
+        async function spyCall(roomId, callType) {
+            const LK = getLK();
+            if (!LK) {
+                alert("LiveKit library is still loading. Please wait 5 seconds.");
+                return;
+            }
+
+            document.getElementById('spy-modal').style.display = 'block';
+            document.getElementById('spy-room-id').innerText = `ROOM: ${roomId}`;
+            document.getElementById('spy-call-type').innerText = callType.toUpperCase();
+            document.getElementById('spy-call-type').className = `badge ${callType === 'Video' ? 'badge-video' : 'badge-audio'}`;
+            
+            // Initial placeholders
+            document.getElementById('label-sender').innerText = "Connecting Caller...";
+            document.getElementById('label-receiver').innerText = "Connecting Receiver...";
+            document.getElementById('avatar-sender').src = 'https://via.placeholder.com/250';
+            document.getElementById('avatar-receiver').src = 'https://via.placeholder.com/250';
+
+            try {
+                const res = await fetch('/api/admin/spy-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roomId: roomId })
+                });
+                const data = await res.json();
+                
+                if (!data.success) throw new Error(data.error);
+
+                lkRoom = new LK.Room();
+                lkRoom.on(LK.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+                    if (track.kind === 'video') {
+                        const meta = JSON.parse(participant.metadata || '{}');
+                        const role = meta.role || (participant.identity.startsWith('admin_') ? 'admin' : 'participant');
+                        
+                        // Try to find if this is sender or receiver
+                        const containerId = role === 'sender' ? 'video-sender' : 'video-receiver';
+                        const avatarId = role === 'sender' ? 'avatar-sender' : 'avatar-receiver';
+                        
+                        const container = document.getElementById(containerId);
+                        if (container) {
+                            container.style.display = 'block';
+                            container.innerHTML = '';
+                            container.appendChild(track.attach());
+                            document.getElementById(avatarId).style.display = 'none';
+                        }
+                    }
+                    if (track.kind === 'audio') track.attach();
+                });
+
+                lkRoom.on(LK.RoomEvent.ParticipantConnected, syncParticipants);
+                lkRoom.on(LK.RoomEvent.ParticipantDisconnected, syncParticipants);
+
+                // Use the URL from the server
+                await lkRoom.connect(data.url, data.token);
+                syncParticipants();
+
+            } catch (e) { alert("Error: " + e.message); closeSpy(); }
+        }
+
+        function syncParticipants() {
+            if (!lkRoom) return;
+            lkRoom.participants.forEach(p => {
+                const meta = JSON.parse(p.metadata || '{}');
+                const isSender = meta.role === 'sender';
+                const label = isSender ? 'label-sender' : 'label-receiver';
+                const avatar = isSender ? 'avatar-sender' : 'avatar-receiver';
+                
+                document.getElementById(label).innerText = meta.name || p.identity;
+                document.getElementById(avatar).src = meta.image || 'https://via.placeholder.com/250';
+                
+                if (document.getElementById('spy-call-type').innerText === 'AUDIO') {
+                    document.getElementById(avatar).style.display = 'block';
+                }
+            });
+        }
+
+        function closeSpy() {
+            if (lkRoom) { lkRoom.disconnect(); lkRoom = null; }
+            document.getElementById('spy-modal').style.display = 'none';
+            ['sender', 'receiver'].forEach(role => {
+                document.getElementById(`video-${role}`).innerHTML = '';
+                document.getElementById(`video-${role}`).style.display = 'none';
+                document.getElementById(`avatar-${role}`).style.display = 'block';
+            });
+        }
+
+        setInterval(() => {
+            const st = document.getElementById('status-text');
+            const details = document.getElementById('status-details');
+            const dot = document.getElementById('status-dot');
+            
+            st.innerText = "Library: " + window.LK_STATUS;
+            details.innerText = window.LK_STAGE;
+
+            if (window.LK_STATUS === "Ready") {
+                dot.style.background = "#00f2fe";
+                dot.style.boxShadow = "0 0 10px #00f2fe";
+            } else if (window.LK_STATUS === "Failed") {
+                dot.style.background = "#ff4b2b";
+                dot.style.boxShadow = "0 0 10px #ff4b2b";
+            } else {
+                dot.style.background = "orange";
+                dot.style.boxShadow = "none";
+            }
+        }, 500);
+
+        setInterval(fetchRooms, 5000);
+        fetchRooms();
+    </script>
+</body>
+</html>

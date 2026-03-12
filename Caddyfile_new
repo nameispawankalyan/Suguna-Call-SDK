@@ -1,0 +1,6 @@
+rtc.suguna.co {
+    reverse_proxy /admin* 13.126.62.238:5000
+    reverse_proxy /api/admin* 13.126.62.238:5000
+    reverse_proxy /livekit-client.js* 13.126.62.238:5000
+    reverse_proxy localhost:7880
+}

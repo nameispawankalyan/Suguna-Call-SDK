@@ -1,0 +1,17 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  node_ip: 13.201.144.30
+turn:
+  enabled: true
+  domain: rtc.suguna.co
+  external_ips:
+    - 13.201.144.30
+  udp_port: 3478
+keys:
+  c0aae067739c99bb81b320d2a0dac87b: e672ef33b110886507d3f188a7ed44e22ccd9104b422714c8083a8c53d0e388c8
+logging:
+  json: false
+  level: info

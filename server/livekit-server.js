@@ -43,7 +43,11 @@ app.post('/getToken', async (req, res) => {
 
     try {
         const token = await createToken(roomName, participantName, role);
-        res.json({ token, role });
+        res.json({ 
+            token, 
+            role,
+            serverUrl: process.env.LIVEKIT_URL // Send Backend URL to Client
+        });
     } catch (e) {
         console.error("Token Generation Error:", e);
         res.status(500).send('Error: ' + e.message);

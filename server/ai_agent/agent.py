@@ -151,32 +151,27 @@ async def analyze_dialogue(ctx, room_name):
                     "content": (
                         "You are an expert security moderator for an Indian dating app."
                         "\n\n🚨 CRITICAL CONTEXT:"
-                        "\n- Users speak TELUGU, but STT transcribes it as HINDI or ENGLISH sounding words."
-                        "\n- Recognize these phonetic TELUGU numbers expressed in Hindi/English STT:"
-                        "\n  * 'Pakati', 'Pick it', 'पकती' -> 1 (Okati)"
-                        "\n  * 'Randu', 'Run do', 'రణ్డూ', 'రెండు' -> 2 (Rendu)"
-                        "\n  * 'Dabba', 'Dbba', 'डब्बा' -> 70 (Debbai)"
-                        "\n  * 'Are bhai', 'Are', 'अरे भाई' -> 6 (Aaru)"
-                        "\n  * 'Tum bhai', 'Thumbai', 'तुम भाई' -> 90 (Thombai)"
-                        "\n  * 'Mohod', 'Mode', 'मुड़ू', 'ముడు' -> 3 (Moodu)"
-                        "\n  * 'Nangal', 'नलुगु', 'నలుగు' -> 4 (Nalugu)"
-                        "\n  * 'They buy', 'Day by' -> 70 (Debbai)"
+                        "\n- Users speak TELUGU, KANNADA, HINDI, TAMIL, or MALAYALAM."
+                        "\n- STT usually transcribes these as HINDI or ENGLISH sounding words."
                         
-                        "\n\n🚫 VIOLATION RULES:"
-                        "\n1. PHONE NUMBERS: Flag if digits or phonetic words (above) are shared."
-                        "\n   - If total extracted digits >= 6 -> VIOLATION."
-                        "\n2. SOCIAL MEDIA IDs: Flag specific usernames for Insta, Snap, WA."
+                        "\n\n🚫 VIOLATION RULES (STRICT CONSENT):"
+                        "\n1. PHONE NUMBERS: Flag ONLY if a user shares a contact number AND the receiver ACCEPTS it."
+                        "\n   - A valid number must have 10 digits and start with 6-9."
+                        "\n   - IGNORE if the receiver is silent, ignores the number, or says 'No/Vodu'."
                         
-                        "\n\n✅ ALLOWED (DO NOT FLAG):"
-                        "\n- Casual dating talk, sex talk, flirting, bad words."
-                        "\n- Small numbers ('10 rupees', '2 times')."
+                        "\n\n🚨 MULTILINGUAL ACCEPTANCE (Set 'acceptance': true if heard):"
+                        "\n- TELUGU: 'Sare', 'Ha', 'Cheppu', 'Ivvu', 'Haa', 'Pampu'."
+                        "\n- HINDI: 'Haan', 'Bolo', 'Do', 'Ok', 'Thike', 'Sahi hai'."
+                        "\n- KANNADA: 'Haudu', 'Heli', 'Kodi', 'Haa'."
+                        "\n- TAMIL: 'Aama', 'Sollu', 'Kodu', 'Ok'."
+                        "\n- MALAYALAM: 'Para', 'Tharu', 'Athe', 'Ok'."
                         
-                        "\n\n🚨 CONSENT RULE:"
-                        "\n- Flag ONLY if the receiver shows interest/acceptance (Sare, Ha, Haan, Cheppu, Bolo, Ivvu, Ok)."
-                        "\n- EXCEPTION: If they share >= 9 digits, flag even without clear acceptance (High Risk)."
-
-                        "\n\nJSON OUTPUT: { \"violation\": true/false, \"acceptance\": true/false, \"reason\": \"...\", \"type\": \"PHONE/SOCIAL\", \"extracted_numbers\": \"Digits retrieved\" }"
-                        "\n- IMPORTANT: Convert phonetic words (like 'Dabba') to their digits (70) in 'extracted_numbers'."
+                        "\n\n✅ ALLOWED (NO REPORT):"
+                        "\n- If receiver doesn't respond or says 'No'."
+                        "\n- Duration/Time: '15 days', '10 minutes'."
+                        "\n- Currency/Generic: '500 rupees', 'Number', 'Payment'."
+                        
+                        "\n\nJSON OUTPUT: { \"violation\": true/false, \"acceptance\": true/false, \"reason\": \"...\", \"type\": \"PHONE/SOCIAL\", \"extracted_numbers\": \"10-digit number\" }"
                     )
                 },
                 {"role": "user", "content": f"Dialogue:\n{dialogue_text}"}
@@ -190,20 +185,27 @@ async def analyze_dialogue(ctx, room_name):
         if result.get("violation"):
             v_type = str(result.get("type", "UNKNOWN")).upper()
             ai_reason = str(result.get("reason", "Violation detected"))
+            extracted = str(result.get("extracted_numbers", ""))
+            digits = "".join(re.findall(r'\d', extracted))
+            receiver_accepted = result.get("acceptance", False)
+            
+            # 🔥 STRICT RULE: Only proceed if receiver explicitly accepted
+            if not receiver_accepted:
+                logger.info(f"✅ Filtered: Number shared but Receiver did not accept or was silent.")
+                return
+
             is_valid = True
             
-            if "PHONE" in v_type or any(c.isdigit() for c in ai_reason):
-                digits = "".join(re.findall(r'\d', str(result.get("extracted_numbers", ai_reason))))
-                if len(digits) < 5:
-                    logger.warning(f"⚠️ Blocked short share: {digits}")
+            if "PHONE" in v_type:
+                # 1. Must be at least 10 digits for Indian Mobiles
+                if len(digits) < 10:
                     is_valid = False
-                elif not result.get("acceptance") and len(digits) < 9:
-                    logger.warning(f"⚠️ Blocked unconfirmed share: {digits}")
+                # 2. Must start with mobile prefix
+                elif not digits.startswith(('6', '7', '8', '9')):
                     is_valid = False
-                else:
-                    reason = f"Shared Phone Numbers: {digits}"
+                
+                reason = f"Shared Phone Numbers: {digits}"
             else:
-                if not result.get("acceptance"): is_valid = False
                 reason = ai_reason
 
             if is_valid:
@@ -212,7 +214,7 @@ async def analyze_dialogue(ctx, room_name):
                 room_context[room_name]["last_violation_time"] = time.time()
                 await handle_violation_report(ctx, receiver_id, sender_id, app_id, webhook_url, reason, dialogue_text)
             else:
-                 logger.info(f"✅ AI Report Filtered: {ai_reason}")
+                 logger.info(f"✅ AI Report Filtered (Invalid Number/Format): {ai_reason}")
 
     except Exception as e:
         logger.error(f"AI Error: {e}")

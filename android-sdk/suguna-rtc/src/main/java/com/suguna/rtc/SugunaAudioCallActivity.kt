@@ -75,8 +75,8 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         
         // Prevent Screenshots/Screen Recording and Keep Screen On
         window.setFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-       // window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE)
-       
+        window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        
        // Ensure Volume Buttons control Voice Call volume
        volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
 
@@ -137,6 +137,10 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             override fun onLocalStreamReady(videoTrack: VideoTrack) {}
 
             override fun onRemoteStreamReady(userId: String?, videoTrack: VideoTrack) {}
+
+            override fun onLocalStreamUpdate(videoTrack: VideoTrack, isMuted: Boolean) {}
+
+            override fun onRemoteStreamUpdate(userId: String?, videoTrack: VideoTrack, isMuted: Boolean) {}
 
             override fun onUserJoined(participant: io.livekit.android.room.participant.RemoteParticipant) {
                 runOnUiThread {

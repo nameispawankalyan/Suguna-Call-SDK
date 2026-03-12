@@ -13,9 +13,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import android.media.AudioManager
+import io.livekit.android.RoomOptions
+import io.livekit.android.room.track.*
 import livekit.org.webrtc.RendererCommon
 import livekit.org.webrtc.EglBase
 import io.livekit.android.LiveKitOverrides
+import io.livekit.android.room.participant.VideoTrackPublishDefaults
 import io.livekit.android.room.track.LocalVideoTrack
 
 class SugunaClient(private val context: Context, private val serverUrl: String) {
@@ -80,9 +83,22 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                     eglBase = eglBase
                 )
                 
+                // Optimized Video Publish settings for Mobile Networks
+                val roomOptions = RoomOptions(
+                    adaptiveStream = true,
+                    videoTrackPublishDefaults = VideoTrackPublishDefaults(
+                        simulcast = true,
+                        videoEncoding = VideoEncoding(
+                            maxBitrate = 800_000, 
+                            maxFps = 24
+                        )
+                    )
+                )
+                
                 room = LiveKit.create(
                     appContext = context,
-                    overrides = overrides
+                    overrides = overrides,
+                    options = roomOptions
                 )
                 
                 setupRoomListeners()
@@ -115,7 +131,7 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
 
                     room?.localParticipant?.setMicrophoneEnabled(true)
                     if (isVideoCall) {
-                        android.util.Log.d("SugunaClient", "Enabling Camera for Local Participant")
+                        android.util.Log.d("SugunaClient", "Enabling Camera for Local Participant (Optimized)")
                         room?.localParticipant?.setCameraEnabled(true)
                         
                         // Reliability: Explicitly poll for the local camera track
