@@ -137,6 +137,7 @@ class SugunaVideoCallActivity : AppCompatActivity() {
         
         // Determine Logic Role
         isSender = intent.getBooleanExtra("IS_SENDER", false)
+        pricePerMin = intent.getIntExtra("PRICE_PER_MIN", if (intent.getBooleanExtra("IS_VIDEO", false)) 60 else 60)
         
         if (isSender) {
             totalSeconds = if (pricePerMin > 0) (coins / pricePerMin) * 60L else 0
@@ -670,7 +671,8 @@ class SugunaVideoCallActivity : AppCompatActivity() {
             remoteImage: String = "",
             coins: Long,
             isSender: Boolean,
-            webhookUrl: String
+            webhookUrl: String,
+            pricePerMin: Int = 60
         ) {
             val intent = Intent(context, SugunaVideoCallActivity::class.java).apply {
                 putExtra("TOKEN", token)
@@ -684,6 +686,8 @@ class SugunaVideoCallActivity : AppCompatActivity() {
                 putExtra("COINS", coins)
                 putExtra("IS_SENDER", isSender)
                 putExtra("WEBHOOK_URL", webhookUrl)
+                putExtra("PRICE_PER_MIN", pricePerMin)
+                putExtra("IS_VIDEO", true)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)

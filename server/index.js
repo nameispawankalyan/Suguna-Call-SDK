@@ -611,9 +611,9 @@ io.on('connection', (socket) => {
 
             const senderData = userSocketMap.get(senderUserId);
             if (senderData) {
-                io.to(senderData.socketId).emit("call_started", { token: senderToken, roomName, serverUrl: process.env.LIVEKIT_URL });
+                io.to(senderData.socketId).emit("call_started", { token: senderToken, roomName, serverUrl: process.env.LIVEKIT_URL, pricePerMin: pricePerMin || 20 });
             }
-            socket.emit("call_started", { token: receiverToken, roomName, serverUrl: process.env.LIVEKIT_URL });
+            socket.emit("call_started", { token: receiverToken, roomName, serverUrl: process.env.LIVEKIT_URL, pricePerMin: pricePerMin || 20 });
         } catch (e) {
             console.error(e);
         }

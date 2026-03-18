@@ -105,6 +105,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         
         // Determine Logic Role: Sender (Payer) vs Receiver
         isSender = intent.getBooleanExtra("IS_SENDER", false)
+        pricePerMin = intent.getIntExtra("PRICE_PER_MIN", if (intent.getBooleanExtra("IS_VIDEO", false)) 60 else 20)
         
         if (isSender) {
             totalSeconds = if (pricePerMin > 0) (coins / pricePerMin) * 60L else 0
@@ -522,7 +523,8 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             remoteImage: String = "",
             coins: Long,
             isSender: Boolean,
-            webhookUrl: String
+            webhookUrl: String,
+            pricePerMin: Int = 20
         ) {
             val intent = Intent(context, SugunaAudioCallActivity::class.java).apply {
                 putExtra("TOKEN", token)
@@ -536,6 +538,8 @@ class SugunaAudioCallActivity : AppCompatActivity() {
                 putExtra("COINS", coins)
                 putExtra("IS_SENDER", isSender)
                 putExtra("WEBHOOK_URL", webhookUrl)
+                putExtra("PRICE_PER_MIN", pricePerMin)
+                putExtra("IS_VIDEO", false)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)

@@ -22,3 +22,10 @@ captures/
 server/configs/
 server/.env
 .env
+
+# Firebase & Keystores (Sensitive)
+google-services.json
+*.jks
+*.keystore
+local.properties
+.idea/
