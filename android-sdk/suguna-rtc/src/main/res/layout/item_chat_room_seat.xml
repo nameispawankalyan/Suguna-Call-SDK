@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="4dp">
+
+    <RelativeLayout
+        android:layout_width="72dp"
+        android:layout_height="72dp">
+
+        <!-- Speaking Ripples for Animation -->
+        <View
+            android:id="@+id/viewRipple1"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_centerInParent="true"
+            android:background="@drawable/bg_ripple_glow"
+            android:visibility="invisible"/>
+
+        <View
+            android:id="@+id/viewRipple2"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_centerInParent="true"
+            android:background="@drawable/bg_ripple_glow"
+            android:visibility="invisible"/>
+
+        <View
+            android:id="@+id/viewRipple3"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_centerInParent="true"
+            android:background="@drawable/bg_ripple_glow"
+            android:visibility="invisible"/>
+
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/ivParticipantProfile"
+            android:layout_width="86dp"
+            android:layout_height="86dp"
+            android:layout_centerInParent="true"
+            android:background="#1affffff"
+            app:strokeWidth="2.5dp"
+            app:strokeColor="#B0FFFFFF"
+            app:shapeAppearanceOverlay="@style/CircleImage"
+            android:src="@drawable/chair_icon"
+            tools:srcCompat="@tools:sample/avatars"/>
+
+        <TextView
+            android:id="@+id/tvOverlayCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Mic Mnemonic Icon if Muted -->
+        <ImageView
+            android:id="@+id/ivMuted"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_alignParentBottom="true"
+            android:layout_alignParentEnd="true"
+            android:src="@android:drawable/stat_notify_call_mute"
+            app:tint="#D32F2F"
+            android:visibility="invisible"/>
+    </RelativeLayout>
+
+    <TextView
+        android:id="@+id/tvParticipantName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="User"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:layout_marginTop="4dp"
+        android:maxLines="1"
+        android:ellipsize="end"/>
+
+</LinearLayout>

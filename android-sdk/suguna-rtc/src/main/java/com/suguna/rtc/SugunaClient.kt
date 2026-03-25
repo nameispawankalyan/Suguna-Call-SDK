@@ -173,9 +173,10 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
         scope.launch {
             try {
                 val data = message.toByteArray(Charsets.UTF_8)
-                room?.localParticipant?.publishData(data)
+                // Use positional true for reliable mode delivery
+                room?.localParticipant?.publishData(data, io.livekit.android.room.track.DataPublishReliability.RELIABLE)
             } catch (e: Exception) {
-                // Log error
+                android.util.Log.e("SugunaClient", "Publish Data Error: ${e.message}", e)
             }
         }
     }

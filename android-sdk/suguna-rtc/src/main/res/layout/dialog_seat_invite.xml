@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_messages_card"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/ivHostProfile"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:layout_marginBottom="16dp"
+        android:src="@color/black"
+        android:scaleType="centerCrop"/>
+
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Seat Invitation"
+        android:textColor="#FFD700"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:id="@+id/tvMessage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="The Host has invited you to take a seat."
+        android:textColor="#FFFFFF"
+        android:gravity="center"
+        android:textSize="14sp"
+        android:layout_marginBottom="24dp"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnReject"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Reject"
+            android:textColor="#FFFFFF"
+            android:layout_marginEnd="12dp"
+            app:backgroundTint="#D32F2F"
+            app:cornerRadius="12dp"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAccept"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Accept"
+            android:textColor="#FFFFFF"
+            app:backgroundTint="#388E3C"
+            app:cornerRadius="12dp"/>
+    </LinearLayout>
+</LinearLayout>
