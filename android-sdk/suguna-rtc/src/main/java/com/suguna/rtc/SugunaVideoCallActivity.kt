@@ -69,6 +69,15 @@ class SugunaVideoCallActivity : AppCompatActivity() {
     
     private val REQUEST_PERMISSION_CODE = 1002
     
+    private val closeDirectCallReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == "com.suguna.rtc.ACTION_CLOSE_DIRECT_CALL") {
+                android.util.Log.d("SugunaDirectCall", "Received Close Direct Call signal")
+                endCall()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_suguna_video_call)
@@ -133,6 +142,13 @@ class SugunaVideoCallActivity : AppCompatActivity() {
             Toast.makeText(this, "Error: Invalid Token", Toast.LENGTH_SHORT).show()
             finish()
             return
+        }
+
+        val closeFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_CLOSE_DIRECT_CALL")
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(closeDirectCallReceiver, closeFilter, 2) // 2 = RECEIVER_NOT_EXPORTED
+        } else {
+            registerReceiver(closeDirectCallReceiver, closeFilter)
         }
         
         // Determine Logic Role
@@ -632,6 +648,9 @@ class SugunaVideoCallActivity : AppCompatActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(closeDirectCallReceiver)
+        } catch (e: Exception) {}
         sugunaClient.leaveRoom()
         handler.removeCallbacksAndMessages(null)
         

@@ -61,6 +61,15 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     // Track if violation dialog is currently showing
     private var isViolationDialogShowing = false
 
+    private val closeDirectCallReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == "com.suguna.rtc.ACTION_CLOSE_DIRECT_CALL") {
+                android.util.Log.d("SugunaDirectCall", "Received Close Direct Call signal")
+                endCall()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_suguna_audio_call)
@@ -101,6 +110,13 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             Toast.makeText(this, "Error: Invalid Token", Toast.LENGTH_SHORT).show()
             finish()
             return
+        }
+        
+        val closeFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_CLOSE_DIRECT_CALL")
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(closeDirectCallReceiver, closeFilter, 2) // 2 = RECEIVER_NOT_EXPORTED
+        } else {
+            registerReceiver(closeDirectCallReceiver, closeFilter)
         }
         
         // Determine Logic Role: Sender (Payer) vs Receiver
@@ -484,6 +500,9 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(closeDirectCallReceiver)
+        } catch (e: Exception) {}
         sugunaClient.leaveRoom()
         handler.removeCallbacksAndMessages(null)
         

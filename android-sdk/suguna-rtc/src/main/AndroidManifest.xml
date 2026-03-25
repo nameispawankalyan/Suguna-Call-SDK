@@ -12,6 +12,8 @@
     <application>
         <activity android:name=".SugunaAudioCallActivity" android:theme="@style/Theme.SugunaRTC" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".SugunaVideoCallActivity" android:theme="@style/Theme.SugunaRTC" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".chatroom.SugunaChatRoomActivity" android:theme="@style/Theme.SugunaRTC" android:exported="false" android:screenOrientation="portrait" />
+        <service android:name=".chatroom.SugunaChatRoomService" android:enabled="true" android:exported="false" />
     </application>
 
 </manifest>
