@@ -72,12 +72,11 @@ class RoomManager {
         if (!isInitial) {
             try {
                 const rooms = await svc.listRooms([roomId]);
-                if (!rooms || rooms.length === 0) {
-                    console.log(`Room ${roomId} no longer exists in LiveKit. Stopping monitor.`);
+                if (!rooms || rooms.length === 0 || rooms[0].numParticipants < 2) {
+                    console.log(`Room ${roomId} has ${rooms[0] ? rooms[0].numParticipants : 0} participants. Stopping monitor.`);
                     this.stopMonitoring(roomId);
                     return;
-                }
-            } catch (e) {
+                }} catch (e) {
                 console.error(`Error checking room ${roomId}:`, e.message);
                 // On API error, we might want to continue or stop? 
                 // Let's just log and continue for now to be safe, or stop?

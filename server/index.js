@@ -193,6 +193,51 @@ app.post('/api/admin/spy-token', async (req, res) => {
     }
 });
 
+app.get('/api/getToken', async (req, res) => {
+    const { roomName, userId, userName, userImage, isHost } = req.query;
+    if (!roomName || !userId) return res.status(400).json({ error: "Missing roomName or userId" });
+
+    try {
+        const role = isHost === 'true' ? 'host' : 'participant';
+        const name = userName || 'User';
+        const image = userImage || '';
+        const appId = "friendzone_001"; 
+
+        // Always pass 'host' to grant canPublish to all participants for data channel delivery
+        const token = await createToken(
+            roomName, userId, 'host', name, 'participant', appId, "", image, "", "Audio"
+        );
+        res.json({ success: true, token: token, serverUrl: process.env.LIVEKIT_URL });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/promote-participant', async (req, res) => {
+    const { roomName, userId } = req.body;
+    if (!roomName || !userId) return res.status(400).json({ error: "Missing roomName or userId" });
+
+    try {
+        const { RoomServiceClient } = require('livekit-server-sdk');
+        const livekitUrl = (process.env.LIVEKIT_URL || "").replace('wss://', 'https://');
+        const svc = new RoomServiceClient(livekitUrl, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+
+        await svc.updateParticipant(roomName, userId, {
+            permission: {
+                canPublish: true,
+                canSubscribe: true,
+                canPublishData: true
+            }
+        });
+
+        console.log(`[Promote] Promoted user ${userId} in room ${roomName} to publish.`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Promote Error:", e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: { origin: "*", methods: ["GET", "POST"] }
@@ -634,6 +679,14 @@ io.on('connection', (socket) => {
             const tenant = tenantManager.getApp(socket.appId || "friendzone_001");
             if (tenant) admin.database(tenant.firebaseApp).ref(`BroadCast/${socket.userId}`).update({ isBusy: false });
             userSocketMap.delete(socket.userId);
+
+            // Cleanup any active call sessions where this user is the caller/owner
+            for (const [rId, sess] of roomManager.sessions.entries()) {
+                if (sess.userId === socket.userId) {
+                    console.log(`[Socket] Disconnected user ${socket.userId} had active session ${rId}. Stopping monitor.`);
+                    roomManager.stopMonitoring(rId);
+                }
+            }
         }
     });
 });
