@@ -66,5 +66,35 @@
             android:layout_marginTop="8dp"
             android:visibility="gone"/>
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:backgroundTint="#9C27B0"
+            android:text="Message"
+            android:textAllCaps="false"
+            android:layout_marginTop="8dp"
+            android:visibility="gone"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAudioCall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:backgroundTint="#4CAF50"
+            android:text="Audio Call"
+            android:textAllCaps="false"
+            android:layout_marginTop="8dp"
+            android:visibility="gone"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnVideoCall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:backgroundTint="#FF9800"
+            android:text="Video Call"
+            android:textAllCaps="false"
+            android:layout_marginTop="8dp"
+            android:visibility="gone"/>
+
     </LinearLayout>
 </LinearLayout>

@@ -73,23 +73,29 @@ class SugunaChatRoomSeatAdapter : RecyclerView.Adapter<SugunaChatRoomSeatAdapter
                 } else {
                     ivProfile.setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
                 }
-            } else {
+            } else if (seat.id.startsWith("id_")) {
+                // Empty Seat Placeholder
                 tvName.text = seat.name
                 ivProfile.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                ivProfile.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                val density = itemView.context.resources.displayMetrics.density
+                val pad = (10 * density).toInt() 
+               // ivProfile.setPadding(pad, pad, pad, pad)
+                ivProfile.setImageResource(R.drawable.chair_icon)
+            } else {
+                // Real seated participant
+                tvName.text = seat.name
+                ivProfile.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                ivProfile.scaleType = ImageView.ScaleType.CENTER_CROP
+               // ivProfile.setPadding(0, 0, 0, 0)
                 
                 if (seat.image.isNotEmpty()) {
-                    ivProfile.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    ivProfile.setPadding(0, 0, 0, 0) 
                     Glide.with(itemView.context)
                         .load(seat.image)
-                        .placeholder(R.drawable.chair_icon)
+                        .placeholder(R.drawable.ic_default_avatar)
                         .into(ivProfile)
                 } else {
-                    ivProfile.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    val density = itemView.context.resources.displayMetrics.density
-                    val pad = (10 * density).toInt() 
-                    ivProfile.setPadding(pad, pad, pad, pad) 
-                    ivProfile.setImageResource(R.drawable.chair_icon)
+                    ivProfile.setImageResource(R.drawable.ic_default_avatar)
                 }
             }
 

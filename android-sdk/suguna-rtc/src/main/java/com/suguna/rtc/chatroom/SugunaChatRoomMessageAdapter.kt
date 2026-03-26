@@ -43,10 +43,10 @@ class SugunaChatRoomMessageAdapter : RecyclerView.Adapter<SugunaChatRoomMessageA
             if (msg.image.isNotEmpty()) {
                 Glide.with(itemView.context)
                     .load(msg.image)
-                    .placeholder(android.R.drawable.sym_def_app_icon)
+                    .placeholder(R.drawable.ic_default_avatar)
                     .into(ivProfile)
             } else {
-                ivProfile.setImageResource(android.R.drawable.sym_def_app_icon)
+                ivProfile.setImageResource(R.drawable.ic_default_avatar)
             }
         }
     }

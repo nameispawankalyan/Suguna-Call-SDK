@@ -29,3 +29,12 @@ google-services.json
 *.keystore
 local.properties
 .idea/
+# Extra Security Rules
+**/google-services.json
+**/service-account.json
+**/serviceAccountKey.json
+.env
+.env.*
+secrets.xml
+server/configs/
+livekit.yaml

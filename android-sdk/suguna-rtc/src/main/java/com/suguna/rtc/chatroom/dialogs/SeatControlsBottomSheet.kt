@@ -13,6 +13,8 @@ class SeatControlsBottomSheet(
     private val seat: SeatParticipant,
     private val isHostLocal: Boolean,
     private val localUserId: String,
+    private val localName: String,
+    private val localImage: String,
     private val isMutedLocal: Boolean,
     private val hostMutedUsers: List<String>,
     private val selfMutedUsers: List<String>,
@@ -35,6 +37,10 @@ class SeatControlsBottomSheet(
         val btnMute = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMute)
         val btnRemove = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnRemove)
         val btnLeave = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnLeave)
+        
+        val btnMessage = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMessage)
+        val btnAudioCall = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAudioCall)
+        val btnVideoCall = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnVideoCall)
 
         tv.text = seat.name
         if (!seat.image.isNullOrEmpty()) {
@@ -100,6 +106,104 @@ class SeatControlsBottomSheet(
                 }
             }
         }
+        
+        // ----------------------------------------------------
+        
+        // ----------------------------------------------------
+        // Message, Audio, and Video Call Integrations
+        // ----------------------------------------------------
+        if (!isTargetSelf && seat.id.isNotEmpty() && !seat.id.startsWith("id_") && !seat.id.startsWith("host_")) {
+             btnMessage.visibility = View.VISIBLE
+             btnMessage.setOnClickListener {
+                 try {
+                     val intent = android.content.Intent().apply {
+                         setClassName(context, "pawankalyan.gpk.friendzone.UI.Activities.Messages.MessageActivity")
+                         putExtra("profileId", seat.id)
+                     }
+                     context.startActivity(intent)
+                 } catch (e: Exception) { e.printStackTrace() }
+                 dialog.dismiss()
+             }
+
+             try {
+                 val dbRef = com.google.firebase.database.FirebaseDatabase.getInstance()
+                      .reference.child("BroadCast").child(seat.id)
+                 dbRef.addListenerForSingleValueEvent(object : com.google.firebase.database.ValueEventListener {
+                      override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
+                          if (snapshot.exists()) {
+                              val encStatus = snapshot.child("Status").getValue(String::class.java) ?: ""
+                              val encCallEnabled = snapshot.child("CallEnabled").getValue(String::class.java) ?: ""
+                              val encAudio = snapshot.child("AudioCallEnabled").getValue(String::class.java) ?: ""
+                              val encVideo = snapshot.child("VideoCallEnabled").getValue(String::class.java) ?: ""
+
+                              val status = com.suguna.rtc.utils.Encryption.decrypt(encStatus) ?: ""
+                              val callEnabled = com.suguna.rtc.utils.Encryption.decrypt(encCallEnabled) ?: "false"
+                              val audio = com.suguna.rtc.utils.Encryption.decrypt(encAudio) ?: "false"
+                              val video = com.suguna.rtc.utils.Encryption.decrypt(encVideo) ?: "false"
+
+                              if (status.equals("Activated", ignoreCase = true) && callEnabled.toBoolean()) {
+                                  if (audio.toBoolean()) {
+                                      btnAudioCall.visibility = View.VISIBLE
+                                      btnAudioCall.setOnClickListener {
+                                           initiateReflectionCall("Audio")
+                                           dialog.dismiss()
+                                      }
+                                  }
+                                  if (video.toBoolean()) {
+                                      btnVideoCall.visibility = View.VISIBLE
+                                      btnVideoCall.setOnClickListener {
+                                           initiateReflectionCall("Video")
+                                           dialog.dismiss()
+                                      }
+                                  }
+                               }
+                           }
+                      }
+                      override fun onCancelled(error: com.google.firebase.database.DatabaseError) {}
+                 })
+             } catch (e: Exception) { e.printStackTrace() }
+        }
+
         dialog.show()
+    }
+    
+    // Fallback reflection invoking SocketManager in FriendZone App dynamically
+    private fun initiateReflectionCall(type: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                // Fetch dynamic coins first, realistically falling back to default if unavailable
+                val coinRef = com.google.firebase.database.FirebaseDatabase.getInstance()
+                    .reference.child("Wallet").child("CoinBalance").child(localUserId)
+                coinRef.get().addOnSuccessListener { snapshot ->
+                    var totalCoins = 0L
+                    if (snapshot.exists()) {
+                        val bonusEnc = snapshot.child("BonusCoins").getValue(String::class.java) ?: "0"
+                        val rechargeEnc = snapshot.child("RechargeCoins").getValue(String::class.java) ?: "0"
+                        val b = com.suguna.rtc.utils.Encryption.decrypt(bonusEnc)?.toLongOrNull() ?: 0L
+                        val r = com.suguna.rtc.utils.Encryption.decrypt(rechargeEnc)?.toLongOrNull() ?: 0L
+                        totalCoins = b + r
+                    }
+                    if ((type == "Audio" && totalCoins < 100) || (type == "Video" && totalCoins < 300)) {
+                         android.widget.Toast.makeText(context, "Insufficient Coins for $type Call", android.widget.Toast.LENGTH_SHORT).show()
+                         return@addOnSuccessListener
+                    }
+                    
+                    try {
+                        val socketClass = Class.forName("pawankalyan.gpk.friendzone.Utils.SocketManager")
+                        val method = socketClass.getMethod("initiateCall", String::class.java, String::class.java, String::class.java, String::class.java, Long::class.java)
+                        
+                        // We need the socketclass object instance because it's an object singleton
+                        val objectInstanceField = socketClass.getDeclaredField("INSTANCE")
+                        val instance = objectInstanceField.get(null)
+                        
+                        // Pass local user details properly
+                        method.invoke(instance, seat.id, type, localName, localImage, totalCoins)
+                    } catch (e: Exception) { 
+                        e.printStackTrace() 
+                        android.widget.Toast.makeText(context, "Unable to init call from Room. Link missing.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
     }
 }
