@@ -27,10 +27,26 @@ class RequestsBottomSheet(
         bottomSheet?.setBackgroundResource(android.R.color.transparent)
         (bottomSheet?.parent as? View)?.setBackgroundResource(android.R.color.transparent)
 
-        view.findViewById<TextView>(R.id.tvTitle)?.text = "Seat Requests"
-
         val rv = view.findViewById<RecyclerView>(R.id.rvRequests)
         rv.layoutManager = LinearLayoutManager(context)
+        
+        val emptyStateContainer = view.findViewById<android.widget.LinearLayout>(R.id.emptyStateContainer)
+        val tvEmptyStateMessage = view.findViewById<TextView>(R.id.tvEmptyStateMessage)
+        val tabContainer = view.findViewById<android.widget.LinearLayout>(R.id.tabContainer)
+        val tvTitle = view.findViewById<TextView>(R.id.tvTitle)
+        
+        tabContainer?.visibility = View.GONE
+        tvTitle?.visibility = View.VISIBLE
+        tvTitle?.text = "Seat Requests"
+
+        if (requests.isEmpty()) {
+            emptyStateContainer?.visibility = View.VISIBLE
+            rv.visibility = View.GONE
+            tvEmptyStateMessage?.text = "No pending requests"
+        } else {
+            emptyStateContainer?.visibility = View.GONE
+            rv.visibility = View.VISIBLE
+        }
 
         val adapter = RequestsAdapter(requests, 
             onAccept = { req: SeatParticipant ->

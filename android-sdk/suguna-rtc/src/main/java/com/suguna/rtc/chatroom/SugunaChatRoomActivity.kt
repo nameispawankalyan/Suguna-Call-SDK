@@ -17,6 +17,7 @@ import com.suguna.rtc.chatroom.dialogs.RequestsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatControlsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatInviteDialog
 import io.livekit.android.room.track.VideoTrack
+import io.socket.client.Socket
 import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -49,8 +50,10 @@ class SugunaChatRoomActivity : AppCompatActivity() {
     private val seatedUsers = java.util.TreeMap<Int, SeatParticipant>() // TreeMap enforces seat-id order
     private val hostMutedUsers = mutableSetOf<String>()
     private val selfMutedUsers = mutableSetOf<String>() // Added for self mutes
+    private val invitedUsers = mutableSetOf<String>()
     private val chatHistory = mutableListOf<ChatMessage>()
     private var isRequestSent = false // Track request sent state
+    private var isInviteDialogShowing = false
     
     private val promoHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var promoRunnable: Runnable? = null
@@ -156,13 +159,166 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                     if (!isHostLocal) {
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                             try {
-                                val jRequest = org.json.JSONObject().apply { put("type", "seat_state_request") }
-                                sugunaClient.publishData(jRequest.toString())
-                                
-                                val hRequest = org.json.JSONObject().apply { put("type", "chat_history_request") }
-                                sugunaClient.publishData(hRequest.toString())
+                                // Sync via Socket (V2 - High Scalability)
+                                val rId = intent.getStringExtra("ROOM_ID") ?: ""
+                                com.suguna.rtc.utils.SocketManager.crJoin(rId, localUserId, localName, localImage, isHostLocal)
                             } catch (e: Exception) {}
                         }, 1200)
+                    } else {
+                         // Host Joins
+                         val rId = intent.getStringExtra("ROOM_ID") ?: ""
+                         com.suguna.rtc.utils.SocketManager.crJoin(rId, localUserId, localName, localImage, true)
+                    }
+
+                    // Setup Socket Listeners for Room Management
+                    val sock = com.suguna.rtc.utils.SocketManager.getSocket()
+                    sock?.on("cr_state_sync") { args: Array<Any>? ->
+                        runOnUiThread {
+                            val data = args?.getOrNull(0) as? org.json.JSONObject
+                            val seatsJson = data?.optJSONObject("seats")
+                            if (seatsJson != null) {
+                                seatedUsers.clear()
+                                val keys = seatsJson.keys()
+                                while (keys.hasNext()) {
+                                    val key = keys.next()
+                                    val uObj = seatsJson.getJSONObject(key)
+                                    val u = SeatParticipant(
+                                        uObj.getString("userId"),
+                                        uObj.getString("name"),
+                                        uObj.getString("image")
+                                    )
+                                    seatedUsers[key.toInt()] = u
+                                }
+                                updateSeats()
+                            }
+                        }
+                    }
+                    
+                    sock?.on("cr_handle_request") { args: Array<Any>? ->
+                        runOnUiThread {
+                            val reqJson = args?.getOrNull(0) as? org.json.JSONObject
+                            if (reqJson != null) {
+                                val reqU = SeatParticipant(reqJson.getString("userId"), reqJson.getString("name"), reqJson.optString("image"))
+                                if (!requestList.any { it.id == reqU.id }) {
+                                    requestList.add(reqU)
+                                    updateRequestCount()
+                                }
+                            }
+                        }
+                    }
+                    
+                    sock?.on("cr_seat_status") { args: Array<Any>? ->
+                        runOnUiThread {
+                             val sData = args?.getOrNull(0) as? org.json.JSONObject
+                             val action = sData?.optString("action") ?: ""
+                             if (action == "promote") {
+                                  val sId = sData?.optInt("seatId", -1) ?: -1
+                                  android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                      sugunaClient.setMicrophoneEnabled(true)
+                                      
+                                      // Tell the Host (and everyone) that I am ready in the seat
+                                      try {
+                                          val confirmJson = org.json.JSONObject().apply {
+                                              put("type", "seat_confirm")
+                                              put("seat_id", sId)
+                                              put("user_id", localUserId)
+                                              put("name", localName)
+                                              put("image", localImage)
+                                          }
+                                          sugunaClient.publishData(confirmJson.toString())
+                                      } catch(e: Exception) {}
+                                  }, 1000)
+                                  isMuted = false
+                                  isRequestSent = false // clear request
+                                  setupControls()
+                             } else if (action == "remove") {
+                                  isMuted = true
+                                  // Clear mute states
+                                  selfMutedUsers.remove(localUserId)
+                                  hostMutedUsers.remove(localUserId)
+                                  sugunaClient.setMicrophoneEnabled(false)
+                                  setupControls()
+                             }
+                        }
+                    }
+
+                    sock?.on("cr_chat_received") { args: Array<Any>? ->
+                         runOnUiThread {
+                             val data = args?.getOrNull(0) as? org.json.JSONObject
+                             if (data != null) {
+                                 val msg = ChatMessage(
+                                     senderId = data.getString("userId"),
+                                     name = data.getString("name"),
+                                     image = data.optString("image"),
+                                     message = data.getString("msg"),
+                                     timestamp = data.optString("time", "")
+                                 )
+                                 messageAdapter.addMessage(msg)
+                                 findViewById<RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
+                             }
+                         }
+                    }
+
+                    sock?.on("cr_online_count") { args: Array<Any>? ->
+                         runOnUiThread {
+                             val count = args?.getOrNull(0) as? Int ?: 1
+                             findViewById<TextView>(R.id.tvOnlineCount).text = count.toString()
+                         }
+                    }
+
+                    sock?.on("cr_seat_invite") { args: Array<Any>? ->
+                         runOnUiThread {
+                             val data = args?.getOrNull(0) as? org.json.JSONObject
+                             val hostN = data?.optString("hostName", "Host") ?: "Host"
+                             showInviteDialog(hostN)
+                         }
+                    }
+                    
+                    sock?.on("seat_invite_accept") { args: Array<Any>? ->
+                         runOnUiThread {
+                              if (isHostLocal) {
+                                  val json = args?.getOrNull(0) as? org.json.JSONObject
+                                  if (json != null) {
+                                      val senderId = json.getString("sender_id")
+                                      val name = json.getString("name")
+                                      val image = json.optString("image")
+                                      val p = SeatParticipant(senderId, name, image)
+                                      handleAcceptUser(p)
+                                  }
+                              }
+                         }
+                    }
+
+                    sock?.on("cr_chat_history_res") { args: Array<Any>? ->
+                        runOnUiThread {
+                            val data = args?.getOrNull(0) as? org.json.JSONObject
+                            val messages = data?.optJSONArray("messages")
+                            if (messages != null && chatHistory.isEmpty()) { // Only load if locally empty to avoid duplicates
+                                for (i in 0 until messages.length()) {
+                                    val mObj = messages.getJSONObject(i)
+                                    val msg = ChatMessage(
+                                        senderId = mObj.getString("userId"),
+                                        name = mObj.getString("name"),
+                                        image = mObj.optString("image"),
+                                        message = mObj.getString("msg"),
+                                        timestamp = mObj.optString("time", "")
+                                    )
+                                    if (chatHistory.none { it.timestamp == msg.timestamp && it.message == msg.message }) {
+                                        chatHistory.add(msg)
+                                        messageAdapter.addMessage(msg)
+                                    }
+                                }
+                                findViewById<RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
+                            }
+                        }
+                    }
+
+                    sock?.on("cr_blocked") { args: Array<Any>? ->
+                         runOnUiThread {
+                             val data = args?.getOrNull(0) as? org.json.JSONObject
+                             Toast.makeText(this@SugunaChatRoomActivity, data?.optString("message", "You are blocked"), Toast.LENGTH_LONG).show()
+                             finish()
+                         }
                     }
 
                     if (isHostLocal && promoRunnable == null) {
@@ -178,7 +334,7 @@ class SugunaChatRoomActivity : AppCompatActivity() {
 
                                  if (currentTime - joinedTime >= 60000 && currentTime - lastTime >= 15 * 60 * 1000) {
                                      currentPrefs.edit().putLong("lastPromoTime", currentTime).apply()
-                                     val url = "https://asia-south1-friendzone-a40d9.cloudfunctions.net/manualRoomPromotions"
+                                     val url = "https://asia-south1-friendzone-a40d9.cloudfunctions.net/manualRoomPromotions?roomId=$localUserId"
                                      val request = okhttp3.Request.Builder().url(url).build()
                                      okhttp3.OkHttpClient().newCall(request).enqueue(object : okhttp3.Callback {
                                          override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
@@ -203,6 +359,12 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                     val pId = participant.identity?.value ?: ""
                     val isHost = pId == roomOwnerId
                     
+                    // Clear stale mute states for safely re-joined users
+                    if (isHostLocal) {
+                        selfMutedUsers.remove(pId)
+                        hostMutedUsers.remove(pId)
+                    }
+                    
                     var pImage = ""
                     try {
                         val meta = org.json.JSONObject(participant.metadata ?: "{}")
@@ -225,18 +387,11 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                             broadcastSeatState()
                         }, 2500)
-                        
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            broadcastChatHistory()
-                        }, 1000)
                     } else {
                         // Request state explicitly when anyone joins (since it could be the Host)
                         try {
                              val jState = JSONObject().apply { put("type", "seat_state_request") }
                              sugunaClient.publishData(jState.toString())
-                             
-                             val jHist = JSONObject().apply { put("type", "chat_history_request") }
-                             sugunaClient.publishData(jHist.toString())
                         } catch (e: Exception) {}
                     }
 
@@ -347,6 +502,9 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                                         setupControls()
                                         updateSeats()
                                     }
+                                    if (isHostLocal) {
+                                        invitedUsers.remove(targetId)
+                                    }
                                 }
                                 "seat_remove" -> {
                                     val targetId = json.getString("target_id")
@@ -359,9 +517,17 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                                         updateSeats()
                                     }
                                 }
+                                "force_exit" -> {
+                                    val targetId = json.optString("target_id")
+                                    if (localUserId == targetId) {
+                                        Toast.makeText(this@SugunaChatRoomActivity, "You have been removed from the room by the Host.", Toast.LENGTH_LONG).show()
+                                        finish()
+                                    }
+                                }
                                  "seat_confirm" -> {
                                       if (isHostLocal) {
                                            val targetId = json.getString("user_id")
+                                           invitedUsers.remove(targetId) // Clear invited status since they sat down
                                            val sId = json.getInt("seat_id")
                                            val u = SeatParticipant(
                                                 targetId,
@@ -426,8 +592,13 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                                  }
                                 "seat_leave" -> {
                                       val targetId = json.getString("user_id")
+                                      if (isHostLocal) {
+                                           invitedUsers.remove(targetId)
+                                      }
                                       val removed = seatedUsers.values.removeIf { it.id == targetId }
                                       if (removed && isHostLocal) {
+                                          hostMutedUsers.remove(targetId)
+                                          selfMutedUsers.remove(targetId)
                                           shiftSeats()
                                           broadcastSeatState()
                                       }
@@ -437,17 +608,29 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                                       val targetId = json.getString("user_id")
                                       listParticipants.removeAll { it.id == targetId }
                                       if (isHostLocal) {
+                                           invitedUsers.remove(targetId)
                                            requestList.removeAll { it.id == targetId }
                                            updateRequestCount()
+                                           hostMutedUsers.remove(targetId) // Clear forced mute on leave
                                            val removed = seatedUsers.values.removeIf { it.id == targetId }
                                            if (removed) {
                                                 shiftSeats()
                                                 broadcastSeatState()
                                            }
                                       }
+                                      selfMutedUsers.remove(targetId) // Clear self mute state
                                       updateSeats()
                                       updateOnlineCount()
                                       setupControls()
+                                 }
+                                 "invite_reject" -> {
+                                      if (isHostLocal) {
+                                           val senderId = json.getString("sender_id")
+                                           invitedUsers.remove(senderId)
+                                           // Also update the bottom sheet if it's currently open
+                                           val bs = supportFragmentManager.findFragmentByTag("OnlineUsersBottomSheet")
+                                           // It'll refresh next time they open it
+                                      }
                                  }
                             }
                         }
@@ -462,7 +645,8 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                 runOnUiThread {
                     listParticipants.removeAll { it.id == userId }
                     
-                    if (isHostLocal) {
+                    if (isHostLocal && userId != null) {
+                        hostMutedUsers.remove(userId)
                         requestList.removeAll { it.id == userId }
                         updateRequestCount()
                         val removed = seatedUsers.values.removeIf { it.id == userId }
@@ -471,6 +655,7 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                              broadcastSeatState()
                         }
                     }
+                    if (userId != null) selfMutedUsers.remove(userId)
 
                      updateSeats()
                      updateOnlineCount()
@@ -589,27 +774,8 @@ class SugunaChatRoomActivity : AppCompatActivity() {
     }
 
     private fun sendChatMessage(text: String) {
-        val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
-        if (!isHostOnline) {
-             Toast.makeText(this, "Host is offline!", Toast.LENGTH_SHORT).show()
-             return
-        }
-        val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
-        val json = JSONObject().apply {
-            put("type", "chat")
-            put("sender_id", localUserId)
-            put("name", localName)
-            put("image", localImage)
-            put("msg", text)
-            put("time", currentTime)
-        }
-        sugunaClient.publishData(json.toString())
-        
-        // Also add locally
-        val msg = ChatMessage(localUserId, localName, localImage, text, currentTime)
-        messageAdapter.addMessage(msg)
-        chatHistory.add(msg) // Add to history so it’s included when broadcasting to rejoinees
-        findViewById<RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        com.suguna.rtc.utils.SocketManager.crChat(rId, localUserId, localName, localImage, text)
     }
 
     private fun updateRoomOwnerImage() {
@@ -656,37 +822,71 @@ class SugunaChatRoomActivity : AppCompatActivity() {
     }
 
     private fun showOnlineUsersDialog() {
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
         OnlineUsersBottomSheet(
-            this, listParticipants, isHostLocal, localUserId, localName, localImage, roomOwnerId, seatedUsers
-        ) { targetUser: SeatParticipant ->
-            val inviteJson = JSONObject().apply {
-                put("type", "seat_invite")
-                put("target_id", targetUser.id)
-                put("host_name", localName)
+            this, listParticipants, isHostLocal, localUserId, localName, localImage, roomOwnerId, seatedUsers,
+            rId,
+            invitedUserIds = invitedUsers,
+            onInviteSent = { targetUser: SeatParticipant ->
+                invitedUsers.add(targetUser.id)
+                com.suguna.rtc.utils.SocketManager.crInvite(rId, targetUser.id, localName)
+                try {
+                    val pJson = org.json.JSONObject().apply {
+                        put("type", "seat_invite")
+                        put("target_id", targetUser.id)
+                        put("host_name", localName)
+                    }
+                    sugunaClient.publishData(pJson.toString())
+                } catch(e: Exception) {}
+                Toast.makeText(this, "Invitation sent!", Toast.LENGTH_SHORT).show()
+            },
+            onBlockUser = { targetUser: SeatParticipant ->
+                if (seatedUsers.values.any { it.id == targetUser.id }) {
+                    com.suguna.rtc.utils.SocketManager.crSeatAction(rId, "remove", targetUser.id, targetUser.name, targetUser.image ?: "", -1)
+                }
+                try {
+                    val kickJson = org.json.JSONObject().apply {
+                        put("type", "force_exit")
+                        put("target_id", targetUser.id)
+                    }
+                    sugunaClient.publishData(kickJson.toString())
+                } catch (e: Exception) {}
+                com.suguna.rtc.utils.SocketManager.crBlockUser(rId, targetUser.id, targetUser.name, targetUser.image)
+                Toast.makeText(this, "User blocked!", Toast.LENGTH_SHORT).show()
             }
-            sugunaClient.publishData(inviteJson.toString())
-            Toast.makeText(this, "Invitation sent!", Toast.LENGTH_SHORT).show()
-        }.show()
+        ).show()
     }
 
     private fun showInviteDialog(hostName: String) {
-        // Find host image from list
+        if (isFinishing || isDestroyed || isInviteDialogShowing) return
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
         val host = listParticipants.find { it.id == roomOwnerId }
         val hostImage = host?.image ?: ""
 
-        SeatInviteDialog(
-            this, hostName, hostImage,
-            onAccept = {
-                val responseJson = JSONObject().apply {
-                    put("type", "seat_invite_accept")
-                    put("sender_id", localUserId)
-                    put("name", localName)
-                    put("image", localImage)
+        try {
+            SeatInviteDialog(
+                this, hostName, hostImage,
+                onAccept = {
+                    isInviteDialogShowing = false
+                    com.suguna.rtc.utils.SocketManager.crInviteAccept(rId, localUserId, localName, localImage, roomOwnerId)
+                },
+                onReject = {
+                    isInviteDialogShowing = false
+                    com.suguna.rtc.utils.SocketManager.crSeatAction(rId, "reject", localUserId, localName, localImage, -1)
+                    try {
+                        val rejectJson = org.json.JSONObject().apply {
+                            put("type", "invite_reject")
+                            put("sender_id", localUserId)
+                        }
+                        sugunaClient.publishData(rejectJson.toString())
+                    } catch (e: Exception) {}
                 }
-                sugunaClient.publishData(responseJson.toString())
-            },
-            onReject = {}
-        ).show()
+            ).show()
+            isInviteDialogShowing = true
+        } catch (e: Exception) {
+            isInviteDialogShowing = false
+            android.util.Log.e("SugunaChatRoom", "Failed to show invite dialog: ${e.message}")
+        }
     }
 
     private fun updateSeats() {
@@ -812,13 +1012,8 @@ class SugunaChatRoomActivity : AppCompatActivity() {
     }
 
     private fun sendSeatRequest() {
-        val json = JSONObject().apply {
-            put("type", "seat_request")
-            put("sender_id", localUserId)
-            put("name", localName)
-            put("image", localImage)
-        }
-        sugunaClient.publishData(json.toString())
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        com.suguna.rtc.utils.SocketManager.crSeatRequest(rId, localUserId, localName, localImage, roomOwnerId)
         Toast.makeText(this, "Seat request sent!", Toast.LENGTH_SHORT).show()
     }
 
@@ -849,12 +1044,10 @@ class SugunaChatRoomActivity : AppCompatActivity() {
     }
 
     private fun handleAcceptUser(req: SeatParticipant) {
-        // Clear from request list if they were pending
         requestList.removeIf { it.id == req.id }
         updateRequestCount()
 
-        // Find next empty seat sequential
-        val maxSeats = seatManager.getSeats().size
+        val maxSeats = 8
         var nextSeat = -1
         for (i in 1 until maxSeats) {
             if (!seatedUsers.containsKey(i)) {
@@ -864,52 +1057,28 @@ class SugunaChatRoomActivity : AppCompatActivity() {
         }
 
         if (nextSeat == -1) {
-            Toast.makeText(this, "No empty seats available!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No empty seats!", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // Add to map - ensure user is not already in another seat first
-        seatedUsers.entries.removeIf { it.value.id == req.id }
-        seatedUsers[nextSeat] = req
-        updateSeats()
+        // V2 Scalable: Perform Action via Server (Redis will update everyone)
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        com.suguna.rtc.utils.SocketManager.crSeatAction(rId, "promote", req.id, req.name, req.image ?: "", nextSeat)
 
-        // Promote Participant dynamically on Server to grant Publish permissions 
+        // Promoting for permissions is still needed on RTC server
         val promoteUrl = "https://call.suguna.co/api/promote-participant"
         val promoteJson = JSONObject().apply {
-            put("roomName", intent.getStringExtra("ROOM_ID") ?: "")
+            put("roomName", rId)
             put("userId", req.id)
         }
 
         val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
         val body = promoteJson.toString().toRequestBody(mediaType)
-
-        val request = okhttp3.Request.Builder()
-            .url(promoteUrl)
-            .post(body)
-            .build()
+        val request = okhttp3.Request.Builder().url(promoteUrl).post(body).build()
 
         okhttp3.OkHttpClient().newCall(request).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                runOnUiThread { android.widget.Toast.makeText(this@SugunaChatRoomActivity, "Promote Fail: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() }
-            }
-
-            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                runOnUiThread {
-                    if (response.isSuccessful) {
-                        // 1. Send Explicit acceptance target to trigger local mic
-                        val acceptJson = JSONObject().apply {
-                            put("type", "seat_accept")
-                            put("target_id", req.id)
-                        }
-                        sugunaClient.publishData(acceptJson.toString())
-
-                        // 2. Broadcast Seat state
-                        broadcastSeatState()
-                    } else {
-                        android.widget.Toast.makeText(this@SugunaChatRoomActivity, "Promote Fail: ${response.code}", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {}
         })
     }
 
@@ -933,6 +1102,8 @@ class SugunaChatRoomActivity : AppCompatActivity() {
         json.put("type", "seat_state")
         
         val arr = org.json.JSONArray()
+        val redisSeats = JSONObject() // For Redis Map sync
+        
         for ((idx, u) in seatedUsers) {
             val obj = JSONObject()
             obj.put("seat_id", idx)
@@ -940,6 +1111,12 @@ class SugunaChatRoomActivity : AppCompatActivity() {
             obj.put("name", u.name)
             obj.put("image", u.image)
             arr.put(obj)
+            
+            val rObj = JSONObject()
+            rObj.put("userId", u.id)
+            rObj.put("name", u.name)
+            rObj.put("image", u.image)
+            redisSeats.put(idx.toString(), rObj)
         }
         json.put("seats", arr)
 
@@ -952,24 +1129,19 @@ class SugunaChatRoomActivity : AppCompatActivity() {
         json.put("self_muted_ids", selfMuteArr)
 
         sugunaClient.publishData(json.toString())
+        
+        // Sync to Redis via Socket
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        val redisSyncObj = JSONObject().apply {
+            put("seats", redisSeats)
+            put("hostMutedIds", muteArr)
+            put("selfMutedIds", selfMuteArr)
+        }
+        com.suguna.rtc.utils.SocketManager.crSyncState(rId, redisSyncObj)
     }
 
     private fun broadcastChatHistory() {
-        val json = JSONObject()
-        json.put("type", "chat_history")
-        val arr = org.json.JSONArray()
-        for (msg in chatHistory.takeLast(20)) {
-             val obj = JSONObject().apply {
-                 put("sender_id", msg.senderId)
-                 put("name", msg.name)
-                 put("image", msg.image)
-                 put("msg", msg.message)
-                 put("time", msg.timestamp)
-             }
-             arr.put(obj)
-        }
-        json.put("messages", arr)
-        sugunaClient.publishData(json.toString())
+        // Legacy - Chat History persistent in Redis now via Socket.IO
     }
 
     private fun showSeatControlBottomSheet(position: Int, seat: SeatParticipant) {
@@ -997,6 +1169,7 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                 broadcastSeatState()
             },
             onRemoveClick = {
+                invitedUsers.remove(seat.id)
                 seatedUsers.values.removeIf { it.id == seat.id }
                 hostMutedUsers.remove(seat.id)
                 selfMutedUsers.remove(seat.id)
@@ -1016,20 +1189,30 @@ class SugunaChatRoomActivity : AppCompatActivity() {
     }
 
     private fun handleLeaveSeat() {
-        val json = JSONObject().apply {
-            put("type", "seat_leave")
-            put("user_id", localUserId)
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        // Multi-stage removal for reliability
+        val mySeat = seatedUsers.entries.find { it.value.id == localUserId }?.key
+        if (mySeat != null) {
+            com.suguna.rtc.utils.SocketManager.crSeatAction(rId, "remove", localUserId, localName, localImage, mySeat)
         }
-        sugunaClient.publishData(json.toString())
+        com.suguna.rtc.utils.SocketManager.crLeave(rId, localUserId)
+
+        try {
+            val leaveJson = org.json.JSONObject().apply {
+                put("type", "seat_leave")
+                put("user_id", localUserId)
+            }
+            sugunaClient.publishData(leaveJson.toString())
+        } catch(e: Exception) {}
+
         sugunaClient.setMicrophoneEnabled(false)
         isMuted = true
-        isRequestSent = false // Reset seat requested flag
-
-        // Remove from local list to trigger button visibility correctly
+        selfMutedUsers.remove(localUserId)
+        hostMutedUsers.remove(localUserId)
+        isRequestSent = false
         seatedUsers.values.removeIf { it.id == localUserId }
-        
-        setupControls() // Refresh Visibility
-        updateSeats()   // Refresh UI
+        setupControls()
+        updateSeats()
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)

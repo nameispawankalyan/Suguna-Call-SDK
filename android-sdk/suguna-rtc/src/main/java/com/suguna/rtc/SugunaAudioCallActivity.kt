@@ -121,11 +121,14 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         
         // Determine Logic Role: Sender (Payer) vs Receiver
         isSender = intent.getBooleanExtra("IS_SENDER", false)
+        coins = intent.getLongExtra("COINS", 0)
         pricePerMin = intent.getIntExtra("PRICE_PER_MIN", if (intent.getBooleanExtra("IS_VIDEO", false)) 60 else 20)
         
-        if (isSender) {
-            totalSeconds = if (pricePerMin > 0) (coins / pricePerMin) * 60L else 0
-        }
+        // 🔥 CRITICAL: Both Sender & Receiver must start with the same totalSeconds baseline
+        // This prevents the 5-second "jump" when sync happens.
+        totalSeconds = if (pricePerMin > 0) (coins / pricePerMin) * 60L else 0
+        
+        android.util.Log.d("SugunaAudioCall", "Initialized with isSender=$isSender, totalSeconds=$totalSeconds")
 
         // 2. Setup UI
         initViews()
@@ -166,7 +169,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
                     // 🛡️ Safety: Only update name if it's a REAL name (not generic SDK labels)
                     val pName = participant.name
                     if (!pName.isNullOrEmpty()) {
-                        val isGeneric = pName == "Caller" || pName == "Receiver" || pName == "Unknown" || pName == "null"
+                        val isGeneric = pName == "Caller" || pName == "Receiver" || pName == "Unknown" || pName == "null" || pName == "User"
                         if (!isGeneric) {
                             tvRemoteName.text = pName
                         }
@@ -198,6 +201,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
                 if (data.startsWith("SYNC_TIME:")) {
                     val remoteSeconds = data.substringAfter("SYNC_TIME:").toLongOrNull()
                     if (remoteSeconds != null) {
+                        totalSeconds = remoteSeconds // 🔥 SYNC LOCAL VARIABLE to prevent jumping
                         runOnUiThread {
                             updateTimerUI(remoteSeconds)
                         }
@@ -221,8 +225,14 @@ class SugunaAudioCallActivity : AppCompatActivity() {
 
             override fun onUserLeft(userId: String?) {
                 runOnUiThread {
-                    Toast.makeText(this@SugunaAudioCallActivity, "User Disconnected", Toast.LENGTH_SHORT).show()
-                    endCall()
+                    if (userId == remoteUserId) {
+                         remoteUserId = "" // Clear ID to prevent endCall skipping
+                    }
+                    // Grace Period: Reduce from 5s to 2s
+                    Toast.makeText(this@SugunaAudioCallActivity, "Partner Left... Ending...", Toast.LENGTH_SHORT).show()
+                    handler.postDelayed({
+                        endCall()
+                    }, 2000)
                 }
             }
 
@@ -353,21 +363,27 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     
     private fun startSyncTimer() {
         handler.postDelayed(object : Runnable {
+            var syncCounter = 0
             override fun run() {
                 if (isSender) {
-                    // SENDER Logic: Decrease time and Broadcast
                     if (totalSeconds > 0) {
                         totalSeconds--
                         updateTimerUI(totalSeconds)
-                        // Broadcast to Receiver
-                        sugunaClient.publishData("SYNC_TIME:$totalSeconds")
+                        
+                        // 🔥 Authoritative Sync: EVERY SECOND for perfect countdown
+                        if (sugunaClient.isInitialized) {
+                            sugunaClient.publishData("SYNC_TIME:$totalSeconds")
+                        }
                     } else {
-                        // Time Up!
-                        sugunaClient.publishData("SYNC_TIME:0")
+                        if (sugunaClient.isInitialized) {
+                            sugunaClient.publishData("SYNC_TIME:0")
+                        }
                         endCall()
                     }
+                } else {
+                    // Receiver side: NO local decrement to prevent drift
+                    // UI is updated immediately onDataReceived(SYNC_TIME)
                 }
-                // RECEIVER Logic: Does nothing here, waits for onDataReceived
 
                 handler.postDelayed(this, 1000)
             }
@@ -489,11 +505,15 @@ class SugunaAudioCallActivity : AppCompatActivity() {
 
     private fun endCall() {
         val roomName = intent.getStringExtra("CALL_ID") ?: ""
+        if (sugunaClient.isInitialized) {
+             sugunaClient.publishData("SYNC_TIME:0") // Signal zero time to end fast on other side
+        }
         if (roomName.isNotEmpty()) {
             val endCallIntent = Intent("com.suguna.rtc.ACTION_END_CALL")
             endCallIntent.putExtra("ROOM_NAME", roomName)
             sendBroadcast(endCallIntent)
         }
+        
         sugunaClient.leaveRoom()
         finish()
     }

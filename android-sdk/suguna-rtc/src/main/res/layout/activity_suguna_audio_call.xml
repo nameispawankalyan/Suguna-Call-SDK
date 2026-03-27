@@ -60,7 +60,7 @@
     </LinearLayout>
 
     <!-- Timer -->
-    <TextView android:id="@+id/tvDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="00:52" android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold" android:background="@drawable/bg_timer_pill" android:paddingStart="24dp" android:paddingEnd="24dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:letterSpacing="0.1" android:layout_marginTop="32dp" app:layout_constraintTop_toBottomOf="@id/profilesContainer" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"/>
+    <TextView android:id="@+id/tvDuration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="00:00" android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold" android:background="@drawable/bg_timer_pill" android:paddingStart="24dp" android:paddingEnd="24dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:letterSpacing="0.1" android:layout_marginTop="32dp" app:layout_constraintTop_toBottomOf="@id/profilesContainer" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"/>
 
     <!-- Add Coins Button (Sender Only) -->
     <LinearLayout android:id="@+id/btnAddCoins" android:layout_width="wrap_content" android:layout_height="48dp" android:orientation="horizontal" android:gravity="center" android:background="@drawable/bg_btn_gold" android:paddingStart="24dp" android:paddingEnd="24dp" android:layout_marginTop="24dp" android:visibility="gone" app:layout_constraintTop_toBottomOf="@id/tvDuration" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent">

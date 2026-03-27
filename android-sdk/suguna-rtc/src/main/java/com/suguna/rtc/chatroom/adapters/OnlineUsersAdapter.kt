@@ -16,7 +16,10 @@ class OnlineUsersAdapter(
     private val isHostLocal: Boolean,
     private val localUserId: String,
     private val seatedUsers: Map<Int, SeatParticipant>,
-    private val onInvite: (SeatParticipant) -> Unit
+    private val isBlockMode: Boolean = false,
+    private val invitedUserIds: Set<String> = emptySet(),
+    private val onInvite: (SeatParticipant) -> Unit,
+    private val onBlock: (SeatParticipant) -> Unit
 ) : RecyclerView.Adapter<OnlineUsersAdapter.OnlineViewHolder>() {
 
     inner class OnlineViewHolder(val v: View) : RecyclerView.ViewHolder(v) {
@@ -41,12 +44,33 @@ class OnlineUsersAdapter(
              holder.ivProfile.setImageResource(android.R.color.darker_gray)
         }
 
+        if (isBlockMode) {
+            holder.btnAccept.visibility = View.GONE
+            holder.btnReject.visibility = View.VISIBLE
+            (holder.btnReject as? com.google.android.material.button.MaterialButton)?.text = "UNBLOCK"
+            holder.btnReject.setOnClickListener { onBlock(user) }
+            return
+        }
+
         val isSeated = seatedUsers.values.any { it.id == user.id }
 
         if (isHostLocal && !isSeated && user.id != localUserId) {
             holder.btnAccept.visibility = View.VISIBLE
-            (holder.btnAccept as? com.google.android.material.button.MaterialButton)?.text = "Invite"
-            holder.btnAccept.setOnClickListener { onInvite(user) }
+            val btnAcc = holder.btnAccept as? com.google.android.material.button.MaterialButton
+            if (invitedUserIds.contains(user.id)) {
+                btnAcc?.text = "Invited"
+                btnAcc?.isEnabled = false
+                btnAcc?.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.GRAY)
+            } else {
+                btnAcc?.text = "Invite"
+                btnAcc?.isEnabled = true
+                btnAcc?.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#388E3C")) // Green
+            }
+            holder.btnAccept.setOnClickListener { 
+                if (!invitedUserIds.contains(user.id)) {
+                    onInvite(user) 
+                }
+            }
         } else {
             holder.btnAccept.visibility = View.GONE
         }
@@ -55,7 +79,7 @@ class OnlineUsersAdapter(
             holder.btnReject.visibility = View.VISIBLE
             (holder.btnReject as? com.google.android.material.button.MaterialButton)?.text = "Block"
             holder.btnReject.setOnClickListener {
-                Toast.makeText(context, "Coming Soon!", Toast.LENGTH_SHORT).show()
+                onBlock(user)
             }
         } else {
             holder.btnReject.visibility = View.GONE

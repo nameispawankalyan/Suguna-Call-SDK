@@ -153,11 +153,14 @@ class SugunaVideoCallActivity : AppCompatActivity() {
         
         // Determine Logic Role
         isSender = intent.getBooleanExtra("IS_SENDER", false)
-        pricePerMin = intent.getIntExtra("PRICE_PER_MIN", if (intent.getBooleanExtra("IS_VIDEO", false)) 60 else 60)
+        coins = intent.getLongExtra("COINS", 0L)
+        pricePerMin = intent.getIntExtra("PRICE_PER_MIN", 60)
         
-        if (isSender) {
-            totalSeconds = if (pricePerMin > 0) (coins / pricePerMin) * 60L else 0
-        }
+        // 🔥 CRITICAL: Both Sender & Receiver must start with the same totalSeconds baseline
+        // This prevents the 5-second "jump" when sync happens.
+        totalSeconds = if (pricePerMin > 0) (coins / pricePerMin) * 60L else 0
+        
+        android.util.Log.d("SugunaVideoCall", "Initialized with isSender=$isSender, totalSeconds=$totalSeconds")
 
         // 2. Setup UI
         initViews()
@@ -243,7 +246,7 @@ class SugunaVideoCallActivity : AppCompatActivity() {
                     remoteUserId = participant.identity?.value ?: ""
                     val pName = participant.name
                     if (!pName.isNullOrEmpty()) {
-                        val isGeneric = pName == "Caller" || pName == "Receiver" || pName == "Unknown" || pName == "null"
+                        val isGeneric = pName == "Caller" || pName == "Receiver" || pName == "Unknown" || pName == "null" || pName == "User"
                         if (!isGeneric) {
                             tvRemoteName.text = pName
                         }
@@ -258,7 +261,10 @@ class SugunaVideoCallActivity : AppCompatActivity() {
                  if (data.startsWith("SYNC_TIME:")) {
                     val remoteSeconds = data.substringAfter("SYNC_TIME:").toLongOrNull()
                     if (remoteSeconds != null) {
-                        runOnUiThread { updateTimerUI(remoteSeconds) }
+                        totalSeconds = remoteSeconds // 🔥 SYNC LOCAL VARIABLE to prevent jumping
+                        runOnUiThread {
+                            updateTimerUI(remoteSeconds)
+                        }
                     }
                 } else {
                     try {
@@ -274,8 +280,14 @@ class SugunaVideoCallActivity : AppCompatActivity() {
 
             override fun onUserLeft(userId: String?) {
                 runOnUiThread {
-                    Toast.makeText(this@SugunaVideoCallActivity, "User Disconnected", Toast.LENGTH_SHORT).show()
-                    endCall()
+                    if (userId == remoteUserId) {
+                         remoteUserId = ""
+                    }
+                    // Grace Period for Video Calls: Reduce from 5s to 2s
+                    Toast.makeText(this@SugunaVideoCallActivity, "Partner Left... Ending...", Toast.LENGTH_SHORT).show()
+                    handler.postDelayed({
+                        endCall()
+                    }, 2000)
                 }
             }
 
@@ -542,16 +554,26 @@ class SugunaVideoCallActivity : AppCompatActivity() {
     
     private fun startSyncTimer() {
         handler.postDelayed(object : Runnable {
+            var syncCounter = 0
             override fun run() {
                 if (isSender) {
                     if (totalSeconds > 0) {
                         totalSeconds--
                         updateTimerUI(totalSeconds)
-                        sugunaClient.publishData("SYNC_TIME:$totalSeconds")
+                        
+                        // 🔥 Authoritative Sync: EVERY SECOND for perfect countdown
+                        if (sugunaClient.isInitialized) {
+                            sugunaClient.publishData("SYNC_TIME:$totalSeconds")
+                        }
                     } else {
-                        sugunaClient.publishData("SYNC_TIME:0")
+                        if (sugunaClient.isInitialized) {
+                            sugunaClient.publishData("SYNC_TIME:0")
+                        }
                         endCall()
                     }
+                } else {
+                    // Receiver side: NO local decrement to prevent drift
+                    // UI is updated immediately onDataReceived(SYNC_TIME)
                 }
                 handler.postDelayed(this, 1000)
             }
@@ -637,11 +659,15 @@ class SugunaVideoCallActivity : AppCompatActivity() {
 
     private fun endCall() {
         val roomName = intent.getStringExtra("CALL_ID") ?: ""
+        if (sugunaClient.isInitialized) {
+             sugunaClient.publishData("SYNC_TIME:0")
+        }
         if (roomName.isNotEmpty()) {
             val endCallIntent = Intent("com.suguna.rtc.ACTION_END_CALL")
             endCallIntent.putExtra("ROOM_NAME", roomName)
             sendBroadcast(endCallIntent)
         }
+        
         sugunaClient.leaveRoom()
         finish()
     }

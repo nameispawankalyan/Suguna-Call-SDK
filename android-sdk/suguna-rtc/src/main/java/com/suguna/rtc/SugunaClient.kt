@@ -27,6 +27,9 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     private var room: Room? = null
     private var eventListener: SugunaEvents? = null
     
+    val isInitialized: Boolean
+        get() = room != null
+    
     // Audio Manager
     private val audioManager by lazy { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
@@ -287,11 +290,36 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     }
 
     fun setMicrophoneEnabled(enabled: Boolean) {
-        scope.launch { room?.localParticipant?.setMicrophoneEnabled(enabled) }
+        scope.launch {
+            try {
+                if (enabled && context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    android.util.Log.e("SugunaClient", "RECORD_AUDIO Permission Denied. Skipping mic enable.")
+                    return@launch
+                }
+                
+                val local = room?.localParticipant ?: return@launch
+                if (local.isMicrophoneEnabled != enabled) {
+                    android.util.Log.d("SugunaClient", "Setting mic enabled: $enabled")
+                    local.setMicrophoneEnabled(enabled)
+                }
+            } catch (e: Throwable) {
+                android.util.Log.e("SugunaClient", "WebRTC Audio Component Error: ${e.message}", e)
+            }
+        }
     }
 
     fun setCameraEnabled(enabled: Boolean) {
-        scope.launch { room?.localParticipant?.setCameraEnabled(enabled) }
+        scope.launch { 
+            try {
+                if (enabled && context.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    android.util.Log.e("SugunaClient", "CAMERA Permission Denied. Skipping camera enable.")
+                    return@launch
+                }
+                room?.localParticipant?.setCameraEnabled(enabled) 
+            } catch (e: Throwable) {
+                android.util.Log.e("SugunaClient", "WebRTC Camera Component Error: ${e.message}", e)
+            }
+        }
     }
 
     fun switchCamera() {

@@ -240,154 +240,11 @@ app.post('/api/promote-participant', async (req, res) => {
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-    cors: { origin: "*", methods: ["GET", "POST"] },
-    allowEIO3: true // 🔥 CRITICAL: SDK uses io.socket:socket.io-client:2.1.2 which requires EIO3 support on a v4 server
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 // Global Socket Map
 const userSocketMap = new Map(); // userId -> { socketId, appId }
-
-// Chat Room In-Memory State (Replaced Redis for standalone PM2 server)
-const crBlocklists = new Map(); // roomId -> Set<userId>
-const crHistories = new Map();  // roomId -> Array<MessagePayload>
-const crStates = new Map();     // roomId -> { seats: {} }
-
-async function broadcastSeatState(roomId) {
-    const state = crStates.get(roomId) || { seats: {} };
-    io.to(`cr_room_${roomId}`).emit("cr_state_sync", state);
-}
-
-async function emitOnlineCount(roomId) {
-    const clients = io.sockets.adapter.rooms.get(`cr_room_${roomId}`);
-    io.to(`cr_room_${roomId}`).emit("cr_online_count", { count: clients ? clients.size : 0 });
-}
-
-// Handle chat room block checks and all related events
-io.on('connection', (socket) => {
-    
-    // --- CHAT ROOM EVENTS ---
-    socket.on("cr_join", async (data) => {
-        try {
-            const { roomId, userId: uid, name, image, isHost } = data;
-            if (!roomId || !uid) return;
-
-            // Block Check
-            const blockedSet = crBlocklists.get(roomId);
-            if (blockedSet && blockedSet.has(uid)) {
-                socket.emit("cr_blocked", { message: "Booked: This Bestie Room" });
-                socket.leave(`cr_room_${roomId}`);
-                return;
-            }
-
-            socket.join(`cr_room_${roomId}`);
-            
-            // Sync History
-            const history = crHistories.get(roomId) || [];
-            if (history.length > 0) {
-                 socket.emit("cr_chat_history_res", { messages: history });
-            }
-
-            // Sync State & Counts
-            await broadcastSeatState(roomId);
-            await emitOnlineCount(roomId);
-        } catch (err) {}
-    });
-
-    socket.on("cr_chat", async (data) => {
-        const { roomId, userId, name, image, msg } = data;
-        const timeStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit', hour12: true });
-        const payload = { userId, name, image, msg, time: timeStr };
-        
-        io.to(`cr_room_${roomId}`).emit("cr_chat_received", payload);
-        
-        if (!crHistories.has(roomId)) crHistories.set(roomId, []);
-        crHistories.get(roomId).push(payload);
-        if (crHistories.get(roomId).length > 100) crHistories.get(roomId).shift(); // KEEP RECENT 100
-    });
-
-    socket.on("cr_seat_request", (data) => {
-        const hs = userSocketMap.get(data.hostId);
-        if (hs) io.to(hs.socketId).emit("cr_handle_request", data);
-    });
-
-    socket.on("cr_seat_action", async (data) => {
-        try {
-            const { roomId, action, userId: targetId, name, image, seatId } = data;
-            if (!crStates.has(roomId)) crStates.set(roomId, { seats: {} });
-            let obj = crStates.get(roomId);
-
-            if (action === "promote") {
-                Object.keys(obj.seats).forEach(k => { if (obj.seats[k].userId === targetId) delete obj.seats[k]; });
-                obj.seats[seatId] = { userId: targetId, name, image };
-            } else if (action === "remove") {
-                delete obj.seats[seatId];
-            }
-
-            await broadcastSeatState(roomId);
-            const ts = userSocketMap.get(targetId);
-            if (ts) io.to(ts.socketId).emit("cr_seat_status", { action, seatId });
-        } catch (err) {}
-    });
-
-    socket.on("cr_invite_accept", async (data) => {
-        try {
-            const { roomId, userId: acceptId, name, image, hostId } = data;
-            if (!crStates.has(roomId)) crStates.set(roomId, { seats: {} });
-            let obj = crStates.get(roomId);
-
-            let sId = -1;
-            for (let i = 1; i <= 7; i++) { if (!obj.seats[i]) { sId = i; break; } }
-
-            if (sId !== -1) {
-                obj.seats[sId] = { userId: acceptId, name, image };
-                await broadcastSeatState(roomId);
-                
-                const hs = userSocketMap.get(hostId);
-                if (hs) io.to(hs.socketId).emit("seat_invite_accept", { sender_id: acceptId, name, image });
-            }
-        } catch (err) {}
-    });
-    
-    socket.on("cr_sync_state", async (data) => {
-        try {
-            const { roomId, state } = data;
-            if (!roomId || !state) return;
-            crStates.set(roomId, state);
-            await broadcastSeatState(roomId);
-        } catch (err) {}
-    });
-
-    socket.on("cr_leave", async (data) => {
-        const { roomId, userId: leaveId } = data;
-        let obj = crStates.get(roomId);
-        if (obj) {
-            let ch = false;
-            Object.keys(obj.seats).forEach(k => { if (obj.seats[k].userId === leaveId) { delete obj.seats[k]; ch = true; } });
-            if (ch) await broadcastSeatState(roomId);
-        }
-        socket.leave(`cr_room_${roomId}`);
-        io.to(`cr_room_${roomId}`).emit("user_left_room", { userId: leaveId });
-        await emitOnlineCount(roomId);
-    });
-
-    socket.on("cr_block_user", async (data) => {
-        const { roomId, targetId } = data;
-        if (!crBlocklists.has(roomId)) crBlocklists.set(roomId, new Set());
-        crBlocklists.get(roomId).add(targetId);
-    });
-
-    socket.on("cr_unblock_user", async (data) => {
-        const { roomId, targetId } = data;
-        if (crBlocklists.has(roomId)) crBlocklists.get(roomId).delete(targetId);
-    });
-
-    socket.on("cr_check_block", async (data) => {
-        const { roomId, userId } = data;
-        const s = crBlocklists.get(roomId);
-        const isBlocked = s ? s.has(userId) : false;
-        socket.emit("cr_block_check_res", { isBlocked });
-    });
-});
 
 // Helper Checks
 async function checkUserEligibility(appId, targetUserId, callType) {
@@ -416,11 +273,6 @@ async function checkUserEligibility(appId, targetUserId, callType) {
 }
 
 io.on('connection', (socket) => {
-    // Debugging: Log EVERY event that hits this socket
-    socket.onAny((eventName, ...args) => {
-        console.log(`[Socket] Received Event: ${eventName} from ${socket.userId || socket.id}`);
-    });
-
     socket.on('join', (data) => {
         const { userId, appId } = data;
         if (!userId) return;
@@ -434,12 +286,6 @@ io.on('connection', (socket) => {
     // --- 1. DIRECT CALL ---
     socket.on('make_call', async ({ targetId, type, senderName, senderImage, coins }) => {
         const appId = socket.appId || "friendzone_001";
-        console.log(`[Socket] Received make_call from ${socket.userId} (App: ${appId}) to Target: ${targetId}`);
-        
-        if (!targetId) {
-            socket.emit('call_failed', { reason: 'No Target User Specified' });
-            return;
-        }
         const userId = socket.userId;
         const tenant = tenantManager.getApp(appId);
 
@@ -472,18 +318,6 @@ io.on('connection', (socket) => {
             db.ref(`BroadCast/${targetId}`).update({ isBusy: true });
 
             tenantManager.initializeCallHistory(appId, callId, userId, targetId, type);
-
-            // Fetch Real Sender Info for target Receiver reliability
-            try {
-                const senderSnap = await db.ref(`Profile_Details/${userId}`).once('value');
-                if (senderSnap.exists()) {
-                    const u = senderSnap.val();
-                    const fetchedName = Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name;
-                    const fetchedImg = Encryption.decrypt(u.ProfileImage) || u.ProfileImage;
-                    if (fetchedName) senderName = fetchedName;
-                    if (fetchedImg) senderImage = fetchedImg;
-                }
-            } catch(e) { console.error("Error fetching sender details:", e); }
         }
 
         // 4. Connect via Socket
@@ -592,18 +426,6 @@ io.on('connection', (socket) => {
 
                 db.ref(`BroadCast/${userId}`).update({ isBusy: true });
                 db.ref(`BroadCast/${targetId}`).update({ isBusy: true });
-
-                // Fetch Real Sender Info for target Receiver reliability
-                try {
-                    const senderSnap = await db.ref(`Profile_Details/${userId}`).once('value');
-                    if (senderSnap.exists()) {
-                        const u = senderSnap.val();
-                        const fetchedName = Encryption.decrypt(u.ProfileName || u.UserName || u.Name) || u.ProfileName || u.UserName || u.Name;
-                        const fetchedImg = Encryption.decrypt(u.ProfileImage) || u.ProfileImage;
-                        if (fetchedName) senderName = fetchedName;
-                        if (fetchedImg) senderImage = fetchedImg;
-                    }
-                } catch(e) { console.error("Error fetching sender details:", e); }
 
                 if (targetData && targetData.socketId) {
                     io.to(targetData.socketId).emit("incoming_call", {
@@ -829,8 +651,7 @@ io.on('connection', (socket) => {
             const receiverToken = await createToken(roomName, receiverUserId, 'host', rName, "receiver", appId, webhookUrl, rImg, gender, callType);
 
             const tenant = tenantManager.getApp(appId);
-            // 🔥 Prioritize webhookUrl from client if provided, else use tenant default
-            const finalWebhook = webhookUrl || (tenant && tenant.config.webhookUrl);
+            const finalWebhook = (tenant && tenant.config.webhookUrl) || webhookUrl;
             
             if (finalWebhook) {
                 console.log(`[Authorization] Starting Room Monitor for room: ${roomName}. Payer: ${senderUserId}, Price: ${pricePerMin || 20}`);

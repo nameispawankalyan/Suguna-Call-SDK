@@ -23,26 +23,36 @@ class TenantManager {
         console.log("Initializing Tenant Manager...");
         for (const [appId, config] of Object.entries(this.appConfigs)) {
             try {
-                const serviceAccountPath = path.resolve(__dirname, config.serviceAccount);
+                // Ensure absolute path resolution starting from /home/ubuntu/server/ if needed
+                let serviceAccountPath = path.isAbsolute(config.serviceAccount) 
+                    ? config.serviceAccount 
+                    : path.resolve(__dirname, config.serviceAccount);
+                
+                // Absolute fallback for this specific server setup
+                if (!fs.existsSync(serviceAccountPath)) {
+                    serviceAccountPath = path.join("/home/ubuntu/server", config.serviceAccount);
+                }
+
                 if (fs.existsSync(serviceAccountPath)) {
                     const firebaseApp = admin.initializeApp({
                         credential: admin.credential.cert(serviceAccountPath),
                         databaseURL: config.databaseURL
-                    }, appId); // Initialize as a named app
-
+                    }, appId); 
                     this.apps.set(appId, { firebaseApp, config });
-                    console.log(`✅ Loaded configuration for App: ${config.name} (${appId})`);
+                    console.log(`✅ Loaded App: ${config.name} (${appId}) from ${serviceAccountPath}`);
                 } else {
-                    console.warn(`⚠️ Service account not found for ${appId} at ${serviceAccountPath}`);
+                    console.error(`❌ FAILED: Service account NOT FOUND for ${appId} at ${serviceAccountPath}`);
                 }
             } catch (error) {
-                console.error(`❌ Error initializing app ${appId}:`, error);
+                console.error(`❌ Error initializing ${appId}:`, error.message);
             }
         }
     }
 
     getApp(appId) {
-        return this.apps.get(appId);
+        if (!appId || appId === "null" || appId === "undefined") return this.apps.get("friendzone_001");
+        // Fallback for FriendZone if specifically requested or not found
+        return this.apps.get(appId) || this.apps.get("friendzone_001");
     }
 
     async sendFCM(appId, userId, callData) {

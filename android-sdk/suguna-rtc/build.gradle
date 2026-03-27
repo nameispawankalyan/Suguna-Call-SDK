@@ -66,6 +66,9 @@ dependencies {
     
     // GSON for JSON parsing if needed
     implementation 'com.google.code.gson:gson:2.10.1'
+    
+    // Socket.io for Real-time signaling
+    implementation 'io.socket:socket.io-client:2.1.2'
 }
 
 afterEvaluate {
