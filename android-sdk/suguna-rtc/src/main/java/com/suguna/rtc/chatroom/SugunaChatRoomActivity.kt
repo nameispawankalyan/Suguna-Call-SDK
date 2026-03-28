@@ -179,6 +179,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                     sock?.on("cr_state_sync") { args: Array<Any>? ->
                         runOnUiThread {
                             val data = args?.getOrNull(0) as? org.json.JSONObject
+                            val pRoomId = data?.optString("roomId") ?: ""
+                            val cRoomId = intent.getStringExtra("ROOM_ID") ?: ""
+                            if (pRoomId.isNotEmpty() && pRoomId != cRoomId) return@runOnUiThread
+
                             val seatsJson = data?.optJSONObject("seats")
                             if (seatsJson != null) {
                                 val keys = seatsJson.keys()
@@ -236,34 +240,42 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                     sock?.on("cr_seat_status") { args: Array<Any>? ->
                         runOnUiThread {
                              val sData = args?.getOrNull(0) as? org.json.JSONObject
+                             val pRoomId = sData?.optString("roomId") ?: ""
+                             val cRoomId = intent.getStringExtra("ROOM_ID") ?: ""
+                             if (pRoomId.isNotEmpty() && pRoomId != cRoomId) return@runOnUiThread
+
                              val action = sData?.optString("action") ?: ""
-                             if (action == "promote") {
-                                  val sId = sData?.optInt("seatId", -1) ?: -1
-                                  android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                      sugunaClient.setMicrophoneEnabled(true)
-                                      
-                                      // Tell the Host (and everyone) that I am ready in the seat
-                                      try {
-                                          val confirmJson = org.json.JSONObject().apply {
-                                              put("type", "seat_confirm")
-                                              put("seat_id", sId)
-                                              put("user_id", localUserId)
-                                              put("name", localName)
-                                              put("image", localImage)
-                                          }
-                                          sugunaClient.publishData(confirmJson.toString())
-                                      } catch(e: Exception) {}
-                                  }, 1000)
-                                  isMuted = false
-                                  isRequestSent = false // clear request
-                                  setupControls()
-                             } else if (action == "remove") {
-                                  isMuted = true
-                                  // Clear mute states
-                                  selfMutedUsers.remove(localUserId)
-                                  hostMutedUsers.remove(localUserId)
-                                  sugunaClient.setMicrophoneEnabled(false)
-                                  setupControls()
+                             val targetId = sData?.optString("userId") ?: ""
+                             
+                             if (targetId == localUserId) {
+                                 if (action == "promote") {
+                                      val sId = sData?.optInt("seatId", -1) ?: -1
+                                      android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                          sugunaClient.setMicrophoneEnabled(true)
+                                          
+                                          // Tell the Host (and everyone) that I am ready in the seat
+                                          try {
+                                              val confirmJson = org.json.JSONObject().apply {
+                                                  put("type", "seat_confirm")
+                                                  put("seat_id", sId)
+                                                  put("user_id", localUserId)
+                                                  put("name", localName)
+                                                  put("image", localImage)
+                                              }
+                                              sugunaClient.publishData(confirmJson.toString())
+                                          } catch(e: Exception) {}
+                                      }, 1000)
+                                      isMuted = false
+                                      isRequestSent = false // clear request
+                                      setupControls()
+                                 } else if (action == "remove") {
+                                      isMuted = true
+                                      // Clear mute states
+                                      selfMutedUsers.remove(localUserId)
+                                      hostMutedUsers.remove(localUserId)
+                                      sugunaClient.setMicrophoneEnabled(false)
+                                      setupControls()
+                                 }
                              }
                         }
                     }
@@ -305,6 +317,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                               if (isHostLocal) {
                                   val json = args?.getOrNull(0) as? org.json.JSONObject
                                   if (json != null) {
+                                      val pRoomId = json.optString("roomId") ?: ""
+                                      val cRoomId = intent.getStringExtra("ROOM_ID") ?: ""
+                                      if (pRoomId.isNotEmpty() && pRoomId != cRoomId) return@runOnUiThread
+
                                       val senderId = json.getString("sender_id")
                                       val name = json.getString("name")
                                       val image = json.optString("image")
@@ -599,7 +615,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                              isMuted = true
                                              sugunaClient.setMicrophoneEnabled(false)
                                          }
-                                      } else if (isSeatedLocal && isHostOnline) {
+                                      } else if (isHostLocal || (isSeatedLocal && isHostOnline)) {
                                           val isSelfMuted = selfMutedUsers.contains(localUserId)
                                           if (!isSelfMuted && isMuted) {
                                                isMuted = false
@@ -1036,6 +1052,12 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     override fun onDestroy() {
         super.onDestroy()
         promoRunnable?.let { promoHandler.removeCallbacks(it) }
+
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        if (rId.isNotEmpty()) {
+            com.suguna.rtc.utils.SocketManager.crLeave(rId, localUserId)
+        }
+
         if (isHostLocal) {
              try {
                   val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
