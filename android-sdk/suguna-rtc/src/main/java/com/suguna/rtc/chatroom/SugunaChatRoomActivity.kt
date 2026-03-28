@@ -25,7 +25,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class SugunaChatRoomActivity : AppCompatActivity() {
+class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
     private lateinit var sugunaClient: SugunaClient
     
@@ -157,9 +157,13 @@ class SugunaChatRoomActivity : AppCompatActivity() {
 
                     // Request State and History from Host for reliable synchronization upon join
                     if (!isHostLocal) {
+                        // CRITICAL: When audience joins, ensure they are MUTED by default
+                        // to prevent accidental audio broadcasting before being seated.
+                        isMuted = true
+                        sugunaClient.setMicrophoneEnabled(false)
+
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                             try {
-                                // Sync via Socket (V2 - High Scalability)
                                 val rId = intent.getStringExtra("ROOM_ID") ?: ""
                                 com.suguna.rtc.utils.SocketManager.crJoin(rId, localUserId, localName, localImage, isHostLocal)
                             } catch (e: Exception) {}
@@ -177,8 +181,8 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                             val data = args?.getOrNull(0) as? org.json.JSONObject
                             val seatsJson = data?.optJSONObject("seats")
                             if (seatsJson != null) {
-                                seatedUsers.clear()
                                 val keys = seatsJson.keys()
+                                val newSeatedUsers = java.util.TreeMap<Int, SeatParticipant>()
                                 while (keys.hasNext()) {
                                     val key = keys.next()
                                     val uObj = seatsJson.getJSONObject(key)
@@ -187,9 +191,31 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                                         uObj.getString("name"),
                                         uObj.getString("image")
                                     )
-                                    seatedUsers[key.toInt()] = u
+                                    newSeatedUsers[key.toInt()] = u
                                 }
-                                updateSeats()
+                                
+                                // Selective Update: Only clear if we actually have data to replace it with
+                                // IMPORTANT: Host MUST be online for state sync to be considered valid for automatic seating
+                                val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
+                                
+                                if (newSeatedUsers.isNotEmpty() || (isHostLocal && seatedUsers.isEmpty())) {
+                                    // If host is offline, audiences should NOT be placed on seats by sync
+                                    // unless they are already active in RTC and were seated before.
+                                    if (!isHostLocal && !isHostOnline) {
+                                         // Host offline -> Keep current state if user is already seated
+                                         val wasSeated = seatedUsers.values.any { it.id == localUserId }
+                                         val isNowSeated = newSeatedUsers.values.any { it.id == localUserId }
+                                         
+                                         if (!wasSeated && isNowSeated) {
+                                              // Don't auto-seat if host is gone
+                                              return@runOnUiThread
+                                         }
+                                    }
+
+                                    seatedUsers.clear()
+                                    seatedUsers.putAll(newSeatedUsers)
+                                    updateSeats()
+                                }
                             }
                         }
                     }
@@ -565,32 +591,33 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                                          for (j in 0 until selfMuteArr.length()) selfMutedUsers.add(selfMuteArr.getString(j))
                                      }
 
-                                    val isSeatedLocal = seatedUsers.values.any { it.id == localUserId }
+                                     val isSeatedLocal = seatedUsers.values.any { it.id == localUserId }
+                                     val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
 
-                                    if (hostMutedUsers.contains(localUserId)) {
-                                        if (!isMuted) {
-                                            isMuted = true
-                                            sugunaClient.setMicrophoneEnabled(false)
-                                            
-                                        }
-                                     } else if (isSeatedLocal) {
-                                         val isSelfMuted = selfMutedUsers.contains(localUserId)
-                                         if (!isSelfMuted && isMuted) {
-                                              isMuted = false
-                                              sugunaClient.setMicrophoneEnabled(true)
-                                         }
-                                     } else if (!isHostLocal && !isSeatedLocal) {
+                                     if (hostMutedUsers.contains(localUserId)) {
                                          if (!isMuted) {
-                                              isMuted = true
-                                              sugunaClient.setMicrophoneEnabled(false)
+                                             isMuted = true
+                                             sugunaClient.setMicrophoneEnabled(false)
                                          }
-                                      }
+                                      } else if (isSeatedLocal && isHostOnline) {
+                                          val isSelfMuted = selfMutedUsers.contains(localUserId)
+                                          if (!isSelfMuted && isMuted) {
+                                               isMuted = false
+                                               sugunaClient.setMicrophoneEnabled(true)
+                                          }
+                                      } else {
+                                          // Not seated OR Host is offline
+                                          if (!isMuted) {
+                                               isMuted = true
+                                               sugunaClient.setMicrophoneEnabled(false)
+                                          }
+                                       }
 
-                                      updateSeats()
-                                      setupControls()
-                                      updateRoomOwnerImage()
-                                 }
-                                "seat_leave" -> {
+                                       updateSeats()
+                                       setupControls()
+                                       updateRoomOwnerImage()
+                                  }
+                                 "seat_leave" -> {
                                       val targetId = json.getString("user_id")
                                       if (isHostLocal) {
                                            invitedUsers.remove(targetId)
@@ -775,6 +802,13 @@ class SugunaChatRoomActivity : AppCompatActivity() {
 
     private fun sendChatMessage(text: String) {
         val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
+        
+        if (!isHostOnline) {
+             Toast.makeText(this, "Host is offline. Cannot send messages.", Toast.LENGTH_SHORT).show()
+             return
+        }
+        
         com.suguna.rtc.utils.SocketManager.crChat(rId, localUserId, localName, localImage, text)
     }
 
@@ -826,6 +860,7 @@ class SugunaChatRoomActivity : AppCompatActivity() {
         OnlineUsersBottomSheet(
             this, listParticipants, isHostLocal, localUserId, localName, localImage, roomOwnerId, seatedUsers,
             rId,
+            roomOwnerName,
             invitedUserIds = invitedUsers,
             onInviteSent = { targetUser: SeatParticipant ->
                 invitedUsers.add(targetUser.id)
@@ -910,15 +945,25 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                  isMuted = selfMutedUsers.contains(roomOwnerId) || hostMutedUsers.contains(roomOwnerId)
              )
         } else {
-             seats[0] = seats[0].copy(name = "$roomOwnerName (Offline)")
+             // Fallback for Host (Room Owner)
+             seats[0] = seats[0].copy(
+                 id = roomOwnerId,
+                 name = roomOwnerName,
+                 image = "", 
+                 isMuted = true
+             )
         }
 
-        // 2. Map seated audience items sequentially to eliminate any UI gaps
-        val activeSeatedUsers = seatedUsers.values.toList()
+        // 2. Map seated audience items sequentially
+        val activeSeatedUsers = seatedUsers.values.toMutableList()
+        
+        // Position audience sequentially from the seatedUsers map
+        val isSeatedLocal = activeSeatedUsers.any { it.id == localUserId }
+        
         var foundEmpty = false
         var nextAvailableIndex = 1
 
-        // Fill already seated users first
+        // Fill seated users
         for (i in 0 until activeSeatedUsers.size) {
             val idx = i + 1
             if (idx < seats.size) {
@@ -945,7 +990,7 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                  )
              } else {
                  val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
-                 val isSeatedLocal = seatedUsers.values.any { it.id == localUserId }
+                  
                  if (!isSeatedLocal && isHostOnline) {
                       seats[nextAvailableIndex] = seats[nextAvailableIndex].copy(
                           id = "audience_request_$nextAvailableIndex",
@@ -1154,6 +1199,7 @@ class SugunaChatRoomActivity : AppCompatActivity() {
             localUserId,
             localName,
             localImage,
+            roomOwnerName,
             isMuted,
             hostMutedUsers.toList(),
             selfMutedUsers.toList(),
@@ -1257,6 +1303,105 @@ class SugunaChatRoomActivity : AppCompatActivity() {
                 "com.suguna.rtc.ACTION_CALL_FAILED" -> {
                     Toast.makeText(this@SugunaChatRoomActivity, "Failed to connect call...", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    override fun triggerReflectionCall(type: String, seat: SeatParticipant) {
+        initiateReflectionCall(type, seat)
+    }
+
+    // Fallback reflection invoking SocketManager in FriendZone App dynamically
+    private fun initiateReflectionCall(type: String, seat: SeatParticipant) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                // 1. Check Target Status First (Firebase Realtime DB)
+                val dbRef = com.google.firebase.database.FirebaseDatabase.getInstance()
+                    .reference.child("BroadCast").child(seat.id)
+                
+                dbRef.get().addOnSuccessListener { targetSnap ->
+                    if (!targetSnap.exists()) {
+                         android.widget.Toast.makeText(this, "User is currently unavailable.", android.widget.Toast.LENGTH_SHORT).show()
+                         return@addOnSuccessListener
+                    }
+                    
+                    val encStatus = targetSnap.child("Status").getValue(String::class.java) ?: ""
+                    val encCallEnabled = targetSnap.child("CallEnabled").getValue(String::class.java) ?: ""
+                    val encAudio = targetSnap.child("AudioCallEnabled").getValue(String::class.java) ?: ""
+                    val encVideo = targetSnap.child("VideoCallEnabled").getValue(String::class.java) ?: ""
+                    val isBusy = targetSnap.child("isBusy").getValue(Boolean::class.java) ?: false
+
+                    val status = com.suguna.rtc.utils.Encryption.decrypt(encStatus) ?: ""
+                    val callEnabled = com.suguna.rtc.utils.Encryption.decrypt(encCallEnabled)?.toBoolean() ?: false
+                    val audioEnabled = com.suguna.rtc.utils.Encryption.decrypt(encAudio)?.toBoolean() ?: false
+                    val videoEnabled = com.suguna.rtc.utils.Encryption.decrypt(encVideo)?.toBoolean() ?: false
+
+                    if (!status.equals("Activated", ignoreCase = true) || !callEnabled) {
+                         android.widget.Toast.makeText(this, "${seat.name} has disabled calls.", android.widget.Toast.LENGTH_SHORT).show()
+                         return@addOnSuccessListener
+                    }
+                    
+                    if (isBusy) {
+                         android.widget.Toast.makeText(this, "${seat.name} is on another call.", android.widget.Toast.LENGTH_SHORT).show()
+                         return@addOnSuccessListener
+                    }
+
+                    if (type == "Audio" && !audioEnabled) {
+                         android.widget.Toast.makeText(this, "${seat.name} has disabled Audio calls.", android.widget.Toast.LENGTH_SHORT).show()
+                         return@addOnSuccessListener
+                    }
+                    if (type == "Video" && !videoEnabled) {
+                         android.widget.Toast.makeText(this, "${seat.name} has disabled Video calls.", android.widget.Toast.LENGTH_SHORT).show()
+                         return@addOnSuccessListener
+                    }
+
+                    // 2. Check Local Coins
+                    val coinRef = com.google.firebase.database.FirebaseDatabase.getInstance()
+                        .reference.child("Wallet").child("CoinBalance").child(localUserId)
+                    
+                    coinRef.get().addOnSuccessListener { snapshot ->
+                        var totalCoins = 0L
+                        if (snapshot.exists()) {
+                            val bonusEnc = snapshot.child("BonusCoins").getValue(String::class.java) ?: "0"
+                            val rechargeEnc = snapshot.child("RechargeCoins").getValue(String::class.java) ?: "0"
+                            val b = com.suguna.rtc.utils.Encryption.decrypt(bonusEnc)?.toLongOrNull() ?: 0L
+                            val r = com.suguna.rtc.utils.Encryption.decrypt(rechargeEnc)?.toLongOrNull() ?: 0L
+                            totalCoins = b + r
+                        }
+                        
+                        val minNeeded = if (type == "Audio") 100 else 300
+                        if (totalCoins < minNeeded) {
+                             android.widget.Toast.makeText(this, "Insufficient Coins! You need at least $minNeeded coins.", android.widget.Toast.LENGTH_SHORT).show()
+                             return@addOnSuccessListener
+                        }
+                        
+                        // 3. All Checks Passed - Trigger Call
+                        android.util.Log.d("SugunaCall", "Attempting reflection to trigger call: $type to ${seat.id}")
+                        try {
+                            // CORRECT PATH: Reflection should point to the SDK's own SocketManager which is shared/imported by the App
+                            val socketClass = Class.forName("com.suguna.rtc.utils.SocketManager")
+                            val method = socketClass.getMethod("initiateCall", String::class.java, String::class.java, String::class.java, String::class.java, Long::class.java)
+                            
+                            val objectInstanceField = socketClass.getDeclaredField("INSTANCE")
+                            val instance = objectInstanceField.get(null)
+                            
+                            method.invoke(instance, seat.id, type, localName, localImage, totalCoins)
+                            android.util.Log.d("SugunaCall", "Call initiated successfully via reflection")
+                        } catch (e: ClassNotFoundException) {
+                            android.util.Log.e("SugunaCall", "SocketManager class not found", e)
+                            android.widget.Toast.makeText(this, "Call Error: SocketManager not found", android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (e: NoSuchMethodException) {
+                            android.util.Log.e("SugunaCall", "initiateCall method not found", e)
+                            android.widget.Toast.makeText(this, "Call Error: Method mismatch", android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) { 
+                            e.printStackTrace()
+                            android.util.Log.e("SugunaCall", "General reflection error", e)
+                            android.widget.Toast.makeText(this, "Direct Call Service unavailable in this room context.", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) { 
+                e.printStackTrace() 
             }
         }
     }

@@ -6,7 +6,9 @@ import android.view.View
 import android.widget.TextView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.suguna.rtc.R
+import com.suguna.rtc.chatroom.ChatRoomActions
 import com.suguna.rtc.chatroom.SeatParticipant
+import com.suguna.rtc.chatroom.SugunaChatRoomActivity
 
 class SeatControlsBottomSheet(
     private val context: Context,
@@ -15,6 +17,7 @@ class SeatControlsBottomSheet(
     private val localUserId: String,
     private val localName: String,
     private val localImage: String,
+    private val roomOwnerName: String,
     private val isMutedLocal: Boolean,
     private val hostMutedUsers: List<String>,
     private val selfMutedUsers: List<String>,
@@ -145,14 +148,14 @@ class SeatControlsBottomSheet(
                                   if (audio.toBoolean()) {
                                       btnAudioCall.visibility = View.VISIBLE
                                       btnAudioCall.setOnClickListener {
-                                           initiateReflectionCall("Audio")
+                                           (context as? ChatRoomActions)?.triggerReflectionCall("Audio", seat)
                                            dialog.dismiss()
                                       }
                                   }
                                   if (video.toBoolean()) {
                                       btnVideoCall.visibility = View.VISIBLE
                                       btnVideoCall.setOnClickListener {
-                                           initiateReflectionCall("Video")
+                                           (context as? ChatRoomActions)?.triggerReflectionCall("Video", seat)
                                            dialog.dismiss()
                                       }
                                   }
@@ -165,45 +168,5 @@ class SeatControlsBottomSheet(
         }
 
         dialog.show()
-    }
-    
-    // Fallback reflection invoking SocketManager in FriendZone App dynamically
-    private fun initiateReflectionCall(type: String) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            try {
-                // Fetch dynamic coins first, realistically falling back to default if unavailable
-                val coinRef = com.google.firebase.database.FirebaseDatabase.getInstance()
-                    .reference.child("Wallet").child("CoinBalance").child(localUserId)
-                coinRef.get().addOnSuccessListener { snapshot ->
-                    var totalCoins = 0L
-                    if (snapshot.exists()) {
-                        val bonusEnc = snapshot.child("BonusCoins").getValue(String::class.java) ?: "0"
-                        val rechargeEnc = snapshot.child("RechargeCoins").getValue(String::class.java) ?: "0"
-                        val b = com.suguna.rtc.utils.Encryption.decrypt(bonusEnc)?.toLongOrNull() ?: 0L
-                        val r = com.suguna.rtc.utils.Encryption.decrypt(rechargeEnc)?.toLongOrNull() ?: 0L
-                        totalCoins = b + r
-                    }
-                    if ((type == "Audio" && totalCoins < 100) || (type == "Video" && totalCoins < 300)) {
-                         android.widget.Toast.makeText(context, "Insufficient Coins for $type Call", android.widget.Toast.LENGTH_SHORT).show()
-                         return@addOnSuccessListener
-                    }
-                    
-                    try {
-                        val socketClass = Class.forName("pawankalyan.gpk.friendzone.Utils.SocketManager")
-                        val method = socketClass.getMethod("initiateCall", String::class.java, String::class.java, String::class.java, String::class.java, Long::class.java)
-                        
-                        // We need the socketclass object instance because it's an object singleton
-                        val objectInstanceField = socketClass.getDeclaredField("INSTANCE")
-                        val instance = objectInstanceField.get(null)
-                        
-                        // Pass local user details properly
-                        method.invoke(instance, seat.id, type, localName, localImage, totalCoins)
-                    } catch (e: Exception) { 
-                        e.printStackTrace() 
-                        android.widget.Toast.makeText(context, "Unable to init call from Room. Link missing.", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) { e.printStackTrace() }
-        }
     }
 }

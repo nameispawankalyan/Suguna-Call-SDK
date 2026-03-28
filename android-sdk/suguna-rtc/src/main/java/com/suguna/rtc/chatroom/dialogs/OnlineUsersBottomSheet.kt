@@ -24,6 +24,7 @@ class OnlineUsersBottomSheet(
     private val roomOwnerId: String,
     private val seatedUsers: Map<Int, SeatParticipant>,
     private val roomId: String,
+    private val roomOwnerName: String,
     private val invitedUserIds: Set<String>,
     private val onInviteSent: (SeatParticipant) -> Unit,
     private val onBlockUser: (SeatParticipant) -> Unit
@@ -122,16 +123,26 @@ class OnlineUsersBottomSheet(
                  btnBlockTab.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
                  btnBlockTab.setTextColor(android.graphics.Color.parseColor("#808080"))
 
-                 val fullList = listParticipants.toMutableList()
-                 if (!fullList.any { it.id == roomOwnerId }) {
-                     val hName = if (localUserId == roomOwnerId) localName else "Host (Offline)"
-                     val hImage = if (localUserId == roomOwnerId) localImage else ""
-                     fullList.add(0, SeatParticipant(roomOwnerId, hName, hImage, true))
-                 }
-                 
-                 val sortedList = fullList.sortedByDescending { target -> 
-                      seatedUsers.values.any { it.id == target.id } || target.id == roomOwnerId
-                 }
+                  val fullList = listParticipants.toMutableList()
+                  
+                  // 1. Add Room Owner (Host)
+                  if (!fullList.any { it.id == roomOwnerId }) {
+                      val hName = if (localUserId == roomOwnerId) localName else roomOwnerName
+                      val hImage = if (localUserId == roomOwnerId) localImage else ""
+                      fullList.add(0, SeatParticipant(roomOwnerId, hName, hImage, true))
+                  }
+                  
+                  // 2. Add Local User (If not host and not in list)
+                  if (!fullList.any { it.id == localUserId }) {
+                      fullList.add(SeatParticipant(localUserId, localName, localImage, isHost = isHostLocal))
+                  }
+                  
+                  // 3. Deduplicate by ID
+                  val dedupedList = fullList.distinctBy { it.id }
+                  
+                  val sortedList = dedupedList.sortedByDescending { target -> 
+                       seatedUsers.values.any { it.id == target.id } || target.id == roomOwnerId
+                  }
 
                  val adapter = OnlineUsersAdapter(context, sortedList, isHostLocal || localUserId == roomOwnerId, localUserId, seatedUsers, 
                    isBlockMode = false,

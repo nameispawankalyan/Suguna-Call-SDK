@@ -18,3 +18,7 @@ data class ChatMessage(
     val message: String,
     val timestamp: String
 )
+
+interface ChatRoomActions {
+    fun triggerReflectionCall(type: String, seat: SeatParticipant)
+}
