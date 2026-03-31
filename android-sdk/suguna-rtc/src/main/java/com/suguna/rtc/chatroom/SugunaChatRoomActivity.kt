@@ -16,6 +16,7 @@ import com.suguna.rtc.chatroom.dialogs.OnlineUsersBottomSheet
 import com.suguna.rtc.chatroom.dialogs.RequestsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatControlsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatInviteDialog
+import com.suguna.rtc.chatroom.dialogs.ReactionsBottomSheet
 import io.livekit.android.room.track.VideoTrack
 import io.socket.client.Socket
 import org.json.JSONObject
@@ -92,25 +93,24 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         val roomOwnerImage = intent.getStringExtra("ROOM_OWNER_IMAGE") ?: if (isHostLocal) localImage else ""
         roomLevel = intent.getIntExtra("roomLevel", 8)
 
+        checkNotificationPermission()
+        startChatRoomService()
+
         seatManager = SeatManager()
         seatManager.generateSeats(roomLevel)
 
         if (isHostLocal) {
-             try {
-                  val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
-                  db.collection("BestieRooms").document(localUserId).update("status", "Active")
-             } catch (e: Exception) {}
+            try {
+                 val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
+                 db.collection("BestieRooms").document(localUserId).update("status", "Active")
+            } catch (e: Exception) {}
         }
 
-        // Start Lifecycle Monitoring Service for Clear triggers
-        val startServiceIntent = android.content.Intent(this, com.suguna.rtc.chatroom.SugunaChatRoomService::class.java).apply {
-            putExtra("USER_ID", localUserId)
-            putExtra("isHost", isHostLocal)
-        }
-        startService(startServiceIntent)
-
-
-
+        setupSeatsRecyclerView()
+        setupMessagesRecyclerView()
+        setupMessageSender()
+        setupControls()
+        
         val cFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_CLOSE_CHATROOM_SEAT")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(closeChatRoomReceiver, cFilter, 2) // 2 = RECEIVER_NOT_EXPORTED
@@ -132,17 +132,71 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
              com.bumptech.glide.Glide.with(this).load(roomOwnerImage).into(ivRoomOwner)
         }
 
-        setupSeatsRecyclerView()
-        setupMessagesRecyclerView()
-        setupMessageSender()
-        setupControls()
-
         // Request Audio Permission upfront for dynamic seating
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
              requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 101)
         } else {
              startRtc(serverUrl, token)
         }
+    }
+
+    private fun startChatRoomService() {
+        try {
+            val rName = intent.getStringExtra("ROOM_NAME") ?: "Suguna Chat Room"
+            val intent = android.content.Intent(this, SugunaChatRoomService::class.java).apply {
+                putExtra("USER_ID", localUserId)
+                putExtra("isHost", isHostLocal)
+                putExtra("ROOM_NAME", rName)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun stopChatRoomService() {
+        try {
+            stopService(android.content.Intent(this, SugunaChatRoomService::class.java))
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun checkNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 112)
+            }
+        }
+    }
+
+    private var isExplicitLeave = false
+
+    override fun onDestroy() {
+        super.onDestroy()
+        promoRunnable?.let { promoHandler.removeCallbacks(it) }
+
+        if (isExplicitLeave) {
+            val rId = intent.getStringExtra("ROOM_ID") ?: ""
+            if (rId.isNotEmpty()) {
+                com.suguna.rtc.utils.SocketManager.crLeave(rId, localUserId)
+            }
+
+            if (isHostLocal) {
+                try {
+                    val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
+                    db.collection("BestieRooms").document(localUserId).update("status", "Offline")
+                } catch (e: Exception) {}
+            }
+            
+            stopChatRoomService()
+
+            if (::sugunaClient.isInitialized) {
+                sugunaClient.leaveRoom()
+            }
+        }
+        
+        try { unregisterReceiver(closeChatRoomReceiver) } catch (e: Exception) {}
     }
 
     private fun startRtc(serverUrl: String, token: String) {
@@ -284,18 +338,31 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                          runOnUiThread {
                              val data = args?.getOrNull(0) as? org.json.JSONObject
                              if (data != null) {
+                                  val rawTime = data.optString("time", System.currentTimeMillis().toString())
                                  val msg = ChatMessage(
                                      senderId = data.getString("userId"),
                                      name = data.getString("name"),
                                      image = data.optString("image"),
                                      message = data.getString("msg"),
-                                     timestamp = data.optString("time", "")
+                                     timestamp = getFormattedTime(rawTime)
                                  )
                                  messageAdapter.addMessage(msg)
                                  findViewById<RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
                              }
                          }
                     }
+
+                sock?.on("cr_reaction") { args ->
+                     runOnUiThread {
+                         val data = args?.getOrNull(0) as? org.json.JSONObject
+                         if (data != null) {
+                             val uId = data.getString("userId")
+                             val url = data.getString("url")
+                             val type = data.optString("reactionType", "Lottie")
+                             seatAdapter.playReaction(uId, url, type)
+                         }
+                     }
+                }
 
                     sock?.on("cr_online_count") { args: Array<Any>? ->
                          runOnUiThread {
@@ -457,7 +524,8 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             override fun onActiveSpeakerChanged(speakers: List<String>) {
                 runOnUiThread {
                     speakerIds = speakers
-                    updateSeats()
+                    // Use incremental updates to prevent reaction disruption
+                    seatAdapter.updateSpeakingStates(speakers)
                 }
             }
 
@@ -469,12 +537,13 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                         if (json.has("type")) {
                             when (json.getString("type")) {
                                 "chat" -> {
+                                    val rawTime = json.optString("time", System.currentTimeMillis().toString())
                                     val msg = ChatMessage(
                                         senderId = json.getString("sender_id"),
                                         name = json.getString("name"),
                                         image = json.optString("image"),
                                         message = json.getString("msg"),
-                                        timestamp = json.getString("time")
+                                        timestamp = getFormattedTime(rawTime)
                                     )
                                     messageAdapter.addMessage(msg)
                                     chatHistory.add(msg) // Add to history
@@ -485,12 +554,19 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     if (chatHistory.isEmpty()) {
                                          for (i in 0 until hArr.length()) {
                                              val obj = hArr.getJSONObject(i)
-                                             val msg = ChatMessage(obj.getString("sender_id"), obj.getString("name"), obj.optString("image"), obj.getString("msg"), obj.getString("time"))
+                                             val rawT = obj.optString("time", System.currentTimeMillis().toString())
+                                             val msg = ChatMessage(obj.getString("sender_id"), obj.getString("name"), obj.optString("image"), obj.getString("msg"), getFormattedTime(rawT))
                                              messageAdapter.addMessage(msg)
                                              chatHistory.add(msg)
                                          }
                                          findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
                                     }
+                                }
+                                "cr_reaction" -> {
+                                      val uId = json.getString("userId")
+                                      val url = json.getString("url")
+                                      val type = json.optString("reactionType", "Lottie")
+                                      seatAdapter.playReaction(uId, url, type)
                                 }
                                 "chat_history_request" -> {
                                      if (isHostLocal) {
@@ -503,20 +579,20 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                      }
                                 }
                                 "seat_invite" -> {
-                                     val targetId = json.getString("target_id")
-                                     if (localUserId == targetId) {
-                                         val hostName = json.optString("host_name", "Host")
-                                         showInviteDialog(hostName)
-                                     }
+                                    val targetId = json.getString("target_id")
+                                    if (localUserId == targetId) {
+                                        val hostName = json.optString("host_name", "Host")
+                                        showInviteDialog(hostName)
+                                    }
                                 }
                                 "seat_invite_accept" -> {
-                                     if (isHostLocal) {
-                                         val senderId = json.getString("sender_id")
-                                         val name = json.getString("name")
-                                         val image = json.optString("image")
-                                         val p = SeatParticipant(senderId, name, image)
-                                         handleAcceptUser(p)
-                                     }
+                                    if (isHostLocal) {
+                                        val senderId = json.getString("sender_id")
+                                        val name = json.getString("name")
+                                        val image = json.optString("image")
+                                        val p = SeatParticipant(senderId, name, image)
+                                        handleAcceptUser(p)
+                                    }
                                 }
                                 "seat_request" -> {
                                     if (isHostLocal) {
@@ -727,25 +803,39 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
     private fun showLeaveDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_leave_room, null)
-        val builder = androidx.appcompat.app.AlertDialog.Builder(this)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setView(dialogView)
-        val dialog = builder.create()
+            .setCancelable(false)
+            .create()
+            
+        dialog.setCanceledOnTouchOutside(false)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         
-        dialogView.findViewById<TextView>(R.id.tvDialogTitle).text = findViewById<TextView>(R.id.tvRoomName).text.toString()
-        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnKeep).setOnClickListener { dialog.dismiss() }
+        val tvTitle = dialogView.findViewById<TextView>(R.id.tvDialogTitle)
+        tvTitle.text = findViewById<TextView>(R.id.tvRoomName).text.toString()
+        
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMinimize).setOnClickListener { 
+            moveTaskToBack(true)
+            dialog.dismiss() 
+        }
+        
         dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnLeave).setOnClickListener { 
+            isExplicitLeave = true
             if (!isHostLocal) {
                 try {
-                val leaveJson = org.json.JSONObject().apply {
-                    put("type", "user_left_room")
-                    put("user_id", localUserId)
-                }
-                sugunaClient.publishData(leaveJson.toString())
+                    val leaveJson = org.json.JSONObject().apply {
+                        put("type", "user_left_room")
+                        put("user_id", localUserId)
+                    }
+                    sugunaClient.publishData(leaveJson.toString())
                 } catch (e: Exception) {}
             }
             finish()
             dialog.dismiss() 
+        }
+
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnKeep).setOnClickListener {
+            dialog.dismiss()
         }
         
         dialog.show()
@@ -788,11 +878,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
     private fun setupMessageSender() {
         val etMessage = findViewById<EditText>(R.id.etMessage)
-        val btnSend = findViewById<com.google.android.material.imageview.ShapeableImageView>(R.id.btnSendMessage)
+        val btnSend = findViewById<android.widget.ImageButton>(R.id.btnSendMessage)
 
         etMessage.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
-                btnSend.visibility = if (!s.isNullOrBlank()) View.VISIBLE else View.GONE
+                updateBottomBarVisibility()
             }
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -804,6 +894,9 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                 sendChatMessage(text)
                 etMessage.setText("")
                 hideKeyboard()
+                updateBottomBarVisibility()
+            } else {
+                Toast.makeText(this, "Please enter a message!", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -837,37 +930,122 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     }
 
     private fun setupControls() {
-        findViewById<android.widget.LinearLayout>(R.id.btnOnlineCountSub).setOnClickListener {
+        val btnOnlineCountSub = findViewById<android.view.View>(R.id.btnOnlineCountSub)
+        btnOnlineCountSub?.setOnClickListener {
             showOnlineUsersDialog()
         }
 
-        val btnViewRequests = findViewById<android.widget.LinearLayout>(R.id.btnViewRequests)
-        val btnRequestSeat = findViewById<com.google.android.material.imageview.ShapeableImageView>(R.id.btnRequestSeat)
+        val btnViewRequests = findViewById<android.view.View>(R.id.btnViewRequests)
+        val btnRequestSeat = findViewById<android.view.View>(R.id.btnRequestSeat)
+        val btnReactions = findViewById<android.widget.ImageButton>(R.id.btnReactions)
 
-        btnViewRequests.visibility = View.GONE
-        btnRequestSeat.visibility = View.GONE
+        btnViewRequests?.visibility = View.GONE
+        btnRequestSeat?.visibility = View.GONE
+        
+        updateBottomBarVisibility()
 
-        val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
+        btnReactions?.setOnClickListener {
+             showReactionsBottomSheet()
+        }
 
         if (isHostLocal) {
-            btnViewRequests.visibility = View.VISIBLE
-            btnViewRequests.setOnClickListener { showRequestsBottomSheet() }
+            btnViewRequests?.visibility = View.VISIBLE
+            btnViewRequests?.setOnClickListener { showRequestsBottomSheet() }
             updateRequestCount()
         } else {
-            val isSeatedLocal = seatedUsers.values.any { it.id == localUserId }
-            
-            if (!isHostOnline || isSeatedLocal || isRequestSent) {
-                btnRequestSeat.visibility = View.GONE
-            } else {
-                btnRequestSeat.visibility = View.VISIBLE
-            }
-
-            btnRequestSeat.setOnClickListener { 
+            val hOnline = listParticipants.any { it.id == roomOwnerId }
+            val sLocal = seatedUsers.values.any { it.id == localUserId }
+            btnRequestSeat?.visibility = if (!sLocal && hOnline && !isRequestSent) View.VISIBLE else View.GONE
+            btnRequestSeat?.setOnClickListener { 
                 sendSeatRequest() 
                 isRequestSent = true
-                btnRequestSeat.visibility = View.GONE
+                it.visibility = View.GONE
                 updateSeats()
             }
+        }
+    }
+
+    private fun updateBottomBarVisibility() {
+        val etMessage = findViewById<EditText>(R.id.etMessage)
+        val btnSend = findViewById<android.widget.ImageButton>(R.id.btnSendMessage)
+        val btnReactions = findViewById<android.widget.ImageButton>(R.id.btnReactions)
+        
+        val isNotEmpty = etMessage?.text?.toString()?.trim()?.isNotEmpty() == true
+        val isSeated = seatedUsers.values.any { it.id == localUserId } || isHostLocal
+        
+        btnSend?.visibility = if (isNotEmpty) View.VISIBLE else View.GONE
+        btnReactions?.visibility = if (isSeated && !isNotEmpty) View.VISIBLE else View.GONE
+    }
+
+    private fun showReactionsBottomSheet() {
+        val rId = intent.getStringExtra("ROOM_ID") ?: ""
+        ReactionsBottomSheet { reaction: ReactionModel ->
+            if (seatAdapter.isReactionActive(localUserId)) {
+                Toast.makeText(this, "Please wait for current reaction to finish!", Toast.LENGTH_SHORT).show()
+                return@ReactionsBottomSheet
+            }
+            
+            val json = org.json.JSONObject().apply {
+                put("type", "cr_reaction")
+                put("userId", localUserId)
+                put("url", reaction.url)
+                put("reactionType", reaction.type)
+            }
+            sugunaClient.publishData(json.toString())
+            
+            // Sync via Socket for reliability
+            val sock = com.suguna.rtc.utils.SocketManager.getSocket()
+            val sockData = org.json.JSONObject().apply {
+                put("roomId", rId)
+                put("userId", localUserId)
+                put("url", reaction.url)
+                put("reactionType", reaction.type) // Consistent field name
+            }
+            sock?.emit("cr_reaction", sockData)
+
+            // Local Play
+            seatAdapter.playReaction(localUserId, reaction.url, reaction.type)
+        }.show(supportFragmentManager, "Reactions")
+    }
+
+    private fun getFormattedTime(rawTime: String): String {
+        return try {
+            var longTime = rawTime.toLongOrNull() ?: return rawTime
+            // Handle seconds vs milliseconds
+            if (longTime < 20000000000L) { // Likely seconds (e.g. 1711800000)
+                longTime *= 1000
+            }
+            
+            val date = java.util.Date(longTime)
+            val now = System.currentTimeMillis()
+            
+            val calendar = java.util.Calendar.getInstance()
+            val today = calendar.get(java.util.Calendar.DAY_OF_YEAR)
+            val year = calendar.get(java.util.Calendar.YEAR)
+            
+            calendar.time = date
+            val msgDay = calendar.get(java.util.Calendar.DAY_OF_YEAR)
+            val msgYear = calendar.get(java.util.Calendar.YEAR)
+            
+            val sdfTime = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+            
+            if (today == msgDay && year == msgYear) {
+                sdfTime.format(date)
+            } else if ((today - msgDay == 1 || (today == 1 && msgDay > 360)) && year == msgYear) {
+                "Yesterday ${sdfTime.format(date)}"
+            } else {
+                val diff = now - longTime
+                val days = diff / (1000 * 60 * 60 * 24)
+                if (days < 7) {
+                    val sdfDay = java.text.SimpleDateFormat("EEEE h:mm a", java.util.Locale.getDefault())
+                    sdfDay.format(date)
+                } else {
+                    val sdfDate = java.text.SimpleDateFormat("dd/MM/yyyy h:mm a", java.util.Locale.getDefault())
+                    sdfDate.format(date)
+                }
+            }
+        } catch (e: Exception) {
+            rawTime
         }
     }
 
@@ -1028,6 +1206,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         }
 
         seatAdapter.setSeats(seats)
+        updateBottomBarVisibility()
     }
 
     // Keep active speaker list to use globally
@@ -1046,35 +1225,6 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                       mapOf("onlineCount" to count, "status" to "Active")
                   )
              } catch (e: Exception) {}
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        promoRunnable?.let { promoHandler.removeCallbacks(it) }
-
-        val rId = intent.getStringExtra("ROOM_ID") ?: ""
-        if (rId.isNotEmpty()) {
-            com.suguna.rtc.utils.SocketManager.crLeave(rId, localUserId)
-        }
-
-        if (isHostLocal) {
-             try {
-                  val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
-                  db.collection("BestieRooms").document(localUserId).update("status", "Offline")
-             } catch (e: Exception) {}
-        }
-        try {
-            unregisterReceiver(closeChatRoomReceiver)
-        } catch (e: Exception) {}
-        
-        try {
-            val stopServiceIntent = android.content.Intent(this, com.suguna.rtc.chatroom.SugunaChatRoomService::class.java)
-            stopService(stopServiceIntent)
-        } catch (e: Exception) {}
-
-        if (::sugunaClient.isInitialized) {
-            sugunaClient.leaveRoom()
         }
     }
 

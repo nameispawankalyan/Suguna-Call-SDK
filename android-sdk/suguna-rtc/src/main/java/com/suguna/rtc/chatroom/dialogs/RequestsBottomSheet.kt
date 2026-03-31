@@ -21,7 +21,11 @@ class RequestsBottomSheet(
         val dialog = BottomSheetDialog(context, R.style.BottomSheetDialogTheme)
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_requests_list, null)
         dialog.setContentView(view)
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        
+        dialog.window?.let {
+            it.setBackgroundDrawableResource(android.R.color.transparent)
+            it.setDimAmount(0.4f)
+        }
 
         val bottomSheet = dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
         bottomSheet?.setBackgroundResource(android.R.color.transparent)

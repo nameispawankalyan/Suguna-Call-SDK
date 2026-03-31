@@ -210,34 +210,45 @@
                 android:textSize="14sp"
                 android:inputType="text"/>
 
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/btnSendMessage"
-                android:layout_width="60dp"
-                android:layout_height="60dp"
-                android:background="@drawable/bg_send_button_premium"
-                android:src="@android:drawable/ic_menu_send"
-                app:tint="#FFFFFF"
-                android:padding="12dp"
-                app:shapeAppearanceOverlay="@style/CircleImage"
-                android:layout_marginStart="10dp"
-                android:visibility="gone"/>
+            <ImageButton
+                android:id="@+id/btnReactions"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:padding="11dp"
+                android:src="@drawable/mood_icon"
+                android:background="@drawable/bg_circle_reaction"
+                android:visibility="visible"
+                android:layout_marginStart="8dp"
+                app:tint="#FFEB3B"/>
 
+            <ImageButton
+                android:id="@+id/btnSendMessage"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:background="@drawable/bg_circle_send"
+                android:src="@drawable/ic_send_rounded"
+                app:tint="#FFFFFF"
+                android:padding="11dp"
+                android:layout_marginStart="10dp"
+                android:elevation="4dp"
+                android:scaleType="centerInside"
+                android:visibility="gone"/>
         </LinearLayout>
     </LinearLayout>
 
     <com.google.android.material.imageview.ShapeableImageView
         android:id="@+id/btnRequestSeat"
-        android:layout_width="68dp"
-        android:layout_height="68dp"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
         android:background="#25D366"
         android:src="@android:drawable/ic_input_add"
         app:tint="#FFFFFF"
         android:padding="16dp"
-        app:shapeAppearanceOverlay="@style/RoundedSoft"
+        app:shapeAppearanceOverlay="@style/CircleImage"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="80dp"
         android:visibility="gone"
+        android:elevation="6dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
-
 </androidx.constraintlayout.widget.ConstraintLayout>

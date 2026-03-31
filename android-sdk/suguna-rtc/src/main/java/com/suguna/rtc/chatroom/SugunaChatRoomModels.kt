@@ -8,7 +8,9 @@ data class SeatParticipant(
     val isSpeaking: Boolean = false,
     val isMuted: Boolean = false,
     val seatId: Int = 0,
-    val gender: String = "Audience"
+    val gender: String = "Audience",
+    val reactionUrl: String? = null,
+    val reactionType: String? = null
 )
 
 data class ChatMessage(
@@ -17,6 +19,13 @@ data class ChatMessage(
     val image: String = "",
     val message: String,
     val timestamp: String
+)
+
+data class ReactionModel(
+    val id: String = "",
+    val name: String = "",
+    val type: String = "",
+    val url: String = ""
 )
 
 interface ChatRoomActions {

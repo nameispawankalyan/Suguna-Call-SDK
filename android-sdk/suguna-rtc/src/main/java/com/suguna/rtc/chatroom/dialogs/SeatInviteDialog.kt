@@ -20,6 +20,7 @@ class SeatInviteDialog(
          val builder = AlertDialog.Builder(context)
          val view = LayoutInflater.from(context).inflate(R.layout.dialog_seat_invite, null)
          builder.setView(view)
+         builder.setCancelable(false)
 
          val tvMessage = view.findViewById<TextView>(R.id.tvMessage)
          val ivHostProfile = view.findViewById<com.google.android.material.imageview.ShapeableImageView>(R.id.ivHostProfile)

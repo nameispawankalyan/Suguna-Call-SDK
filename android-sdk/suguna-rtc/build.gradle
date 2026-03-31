@@ -69,6 +69,9 @@ dependencies {
     
     // Socket.io for Real-time signaling
     implementation 'io.socket:socket.io-client:2.1.2'
+
+    // Lottie for Reactions
+    implementation 'com.airbnb.android:lottie:6.4.0'
 }
 
 afterEvaluate {

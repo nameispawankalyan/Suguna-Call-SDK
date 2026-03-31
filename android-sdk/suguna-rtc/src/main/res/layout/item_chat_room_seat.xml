@@ -60,6 +60,32 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/lottieReaction"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_alignTop="@id/ivParticipantProfile"
+            android:layout_alignBottom="@id/ivParticipantProfile"
+            android:layout_alignStart="@id/ivParticipantProfile"
+            android:layout_alignEnd="@id/ivParticipantProfile"
+            android:visibility="gone"
+            app:lottie_autoPlay="false"
+            app:lottie_loop="false"
+            android:scaleType="centerCrop"
+            android:elevation="6dp"/>
+
+        <ImageView
+            android:id="@+id/ivReactionEmoji"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_alignTop="@id/ivParticipantProfile"
+            android:layout_alignBottom="@id/ivParticipantProfile"
+            android:layout_alignStart="@id/ivParticipantProfile"
+            android:layout_alignEnd="@id/ivParticipantProfile"
+            android:visibility="gone"
+            android:scaleType="centerCrop"
+            android:elevation="5dp"/>
+
         <!-- Mic Mnemonic Icon if Muted -->
         <ImageView
             android:id="@+id/ivMuted"

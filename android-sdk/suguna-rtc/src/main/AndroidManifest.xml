@@ -8,12 +8,18 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
         <activity android:name=".SugunaAudioCallActivity" android:theme="@style/Theme.SugunaRTC" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".SugunaVideoCallActivity" android:theme="@style/Theme.SugunaRTC" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".chatroom.SugunaChatRoomActivity" android:theme="@style/Theme.SugunaRTC" android:exported="false" android:screenOrientation="portrait" />
-        <service android:name=".chatroom.SugunaChatRoomService" android:enabled="true" android:exported="false" />
+        <service android:name=".chatroom.SugunaChatRoomService" 
+            android:enabled="true" 
+            android:exported="false" 
+            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>
