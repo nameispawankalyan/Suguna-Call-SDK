@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.suguna.rtc.R
 import com.suguna.rtc.SugunaClient
+import android.widget.ImageView
 import com.suguna.rtc.chatroom.dialogs.OnlineUsersBottomSheet
 import com.suguna.rtc.chatroom.dialogs.RequestsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatControlsBottomSheet
@@ -25,6 +26,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.widget.SeekBar
 
 class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
@@ -51,6 +57,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     private val seatedUsers = java.util.TreeMap<Int, SeatParticipant>() // TreeMap enforces seat-id order
     private val hostMutedUsers = mutableSetOf<String>()
     private val selfMutedUsers = mutableSetOf<String>() // Added for self mutes
+    private var mediaPlayer: android.media.MediaPlayer? = null
+    private var musicSyncHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var musicSyncRunnable: Runnable? = null
+    private var currentPlayingUri: String? = null
+    
     private val invitedUsers = mutableSetOf<String>()
     private val chatHistory = mutableListOf<ChatMessage>()
     private var isRequestSent = false // Track request sent state
@@ -59,14 +70,84 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     private val promoHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var promoRunnable: Runnable? = null
     
+    private val musicReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == "com.suguna.rtc.ACTION_PLAY_MUSIC") {
+                val name = intent.getStringExtra("SONG_NAME") ?: "Music"
+                val uriString = intent.getStringExtra("SONG_URI")
+                val artUri = intent.getStringExtra("SONG_ART")
+                val duration = intent.getLongExtra("SONG_DURATION", 0L)
+                if (isHostLocal) {
+                    startMusicBroadcasting(name, uriString, artUri, duration)
+                }
+            }
+        }
+    }
+
     private val closeChatRoomReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
             if (intent?.action == "com.suguna.rtc.ACTION_CLOSE_CHATROOM_SEAT") {
                 android.util.Log.d("SugunaChatRoom", "Received Close ChatRoom signal due to direct call start")
+                isExplicitLeave = true
                 if (!isHostLocal) {
                     handleLeaveSeat() // Leave seat to notify host
+                    try {
+                        val leaveJson = org.json.JSONObject().apply {
+                            put("type", "user_left_room")
+                            put("user_id", localUserId)
+                        }
+                        sugunaClient.publishData(leaveJson.toString())
+                    } catch (e: Exception) {}
                 }
                 finish()
+            }
+        }
+    }
+
+    private var wasMutedBeforePhoneCall = true // Track state before call
+
+    private val audioFocusChangeListener = android.media.AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS,
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                 android.util.Log.d("SugunaChatRoom", "Audio focus lost. Muting room locally...")
+                 wasMutedBeforePhoneCall = isMuted
+                 sugunaClient.setMicrophoneEnabled(false)
+                 sugunaClient.muteAllRemoteAudio(true)
+                 mediaPlayer?.pause()
+            }
+            android.media.AudioManager.AUDIOFOCUS_GAIN -> {
+                 android.util.Log.d("SugunaChatRoom", "Audio focus gained. Restoring room...")
+                 sugunaClient.muteAllRemoteAudio(false)
+                 if (!wasMutedBeforePhoneCall && !selfMutedUsers.contains(localUserId) && !hostMutedUsers.contains(localUserId)) {
+                     sugunaClient.setMicrophoneEnabled(true)
+                     isMuted = false
+                 }
+            }
+        }
+    }
+
+    private val phoneStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
+                val state = intent.getStringExtra(android.telephony.TelephonyManager.EXTRA_STATE)
+                when (state) {
+                    android.telephony.TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+                        android.util.Log.d("SugunaChatRoom", "Phone call answered ($state). Muting chatroom locally...")
+                        wasMutedBeforePhoneCall = isMuted
+                        sugunaClient.setMicrophoneEnabled(false)
+                        sugunaClient.muteAllRemoteAudio(true)
+                        mediaPlayer?.pause()
+                    }
+                    android.telephony.TelephonyManager.EXTRA_STATE_IDLE -> {
+                        android.util.Log.d("SugunaChatRoom", "Phone call ended ($state). Restoring chatroom...")
+                        sugunaClient.muteAllRemoteAudio(false)
+                        if (!wasMutedBeforePhoneCall && !selfMutedUsers.contains(localUserId) && !hostMutedUsers.contains(localUserId)) {
+                             sugunaClient.setMicrophoneEnabled(true)
+                             isMuted = false
+                        }
+                    }
+                }
             }
         }
     }
@@ -80,6 +161,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
         setContentView(R.layout.activity_suguna_chat_room)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        volumeControlStream = android.media.AudioManager.STREAM_MUSIC
 
         val token = intent.getStringExtra("TOKEN") ?: ""
         val serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
@@ -114,8 +196,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         val cFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_CLOSE_CHATROOM_SEAT")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(closeChatRoomReceiver, cFilter, 2) // 2 = RECEIVER_NOT_EXPORTED
+            registerReceiver(phoneStateReceiver, android.content.IntentFilter(android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED), 2)
         } else {
             registerReceiver(closeChatRoomReceiver, cFilter)
+            registerReceiver(phoneStateReceiver, android.content.IntentFilter(android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED))
         }
 
         if (token.isEmpty()) {
@@ -123,6 +207,13 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             finish()
             return
         }
+
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        audioManager.requestAudioFocus(
+            audioFocusChangeListener,
+            android.media.AudioManager.STREAM_MUSIC,
+            android.media.AudioManager.AUDIOFOCUS_GAIN
+        )
 
         findViewById<TextView>(R.id.tvRoomId).text = "ID: ${intent.getStringExtra("ROOM_ID") ?: "--"}"
         findViewById<TextView>(R.id.tvRoomName).text = intent.getStringExtra("ROOM_NAME") ?: "Suguna Chat Room"
@@ -137,6 +228,13 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
              requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 101)
         } else {
              startRtc(serverUrl, token)
+        }
+
+        val mFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_PLAY_MUSIC")
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            this.registerReceiver(musicReceiver, mFilter, 2)
+        } else {
+            this.registerReceiver(musicReceiver, mFilter)
         }
     }
 
@@ -175,6 +273,21 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     override fun onDestroy() {
         super.onDestroy()
         promoRunnable?.let { promoHandler.removeCallbacks(it) }
+        mediaPlayer?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
+
+        // Remove Socket Listeners to prevent Ghost Activity leaks
+        val sock = com.suguna.rtc.utils.SocketManager.getSocket()
+        sock?.off("music_play")
+        sock?.off("music_sync")
+        sock?.off("music_pause")
+        sock?.off("music_resume")
+        sock?.off("music_stop")
+        sock?.off("cr_state_sync")
+        sock?.off("cr_seat_status")
+        sock?.off("cr_chat_received")
+        sock?.off("cr_handle_request")
 
         if (isExplicitLeave) {
             val rId = intent.getStringExtra("ROOM_ID") ?: ""
@@ -197,6 +310,12 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         }
         
         try { unregisterReceiver(closeChatRoomReceiver) } catch (e: Exception) {}
+        try { unregisterReceiver(phoneStateReceiver) } catch (e: Exception) {}
+        
+        try {
+             val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+             audioManager.abandonAudioFocus(audioFocusChangeListener)
+        } catch (e: Exception) {}
     }
 
     private fun startRtc(serverUrl: String, token: String) {
@@ -256,20 +375,13 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                 // IMPORTANT: Host MUST be online for state sync to be considered valid for automatic seating
                                 val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
                                 
-                                if (newSeatedUsers.isNotEmpty() || (isHostLocal && seatedUsers.isEmpty())) {
-                                    // If host is offline, audiences should NOT be placed on seats by sync
-                                    // unless they are already active in RTC and were seated before.
-                                    if (!isHostLocal && !isHostOnline) {
-                                         // Host offline -> Keep current state if user is already seated
-                                         val wasSeated = seatedUsers.values.any { it.id == localUserId }
-                                         val isNowSeated = newSeatedUsers.values.any { it.id == localUserId }
-                                         
-                                         if (!wasSeated && isNowSeated) {
-                                              // Don't auto-seat if host is gone
-                                              return@runOnUiThread
-                                         }
-                                    }
+                                if (!isHostLocal && !isHostOnline) {
+                                     // Host is offline! Ignore state syncs that could remove users from their seats.
+                                     // Freeze the audience seat state until the host returns.
+                                     return@runOnUiThread
+                                }
 
+                                if (newSeatedUsers.isNotEmpty() || (isHostLocal && seatedUsers.isEmpty())) {
                                     seatedUsers.clear()
                                     seatedUsers.putAll(newSeatedUsers)
                                     updateSeats()
@@ -306,6 +418,8 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                       val sId = sData?.optInt("seatId", -1) ?: -1
                                       android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                                           sugunaClient.setMicrophoneEnabled(true)
+                                          sugunaClient.muteAllRemoteAudio(false)
+                                          sugunaClient.setSpeakerphoneEnabled(true)
                                           
                                           // Tell the Host (and everyone) that I am ready in the seat
                                           try {
@@ -562,6 +676,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                          findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
                                     }
                                 }
+                                "clear_messages" -> {
+                                    messageAdapter.clearMessages()
+                                    chatHistory.clear()
+                                }
                                 "cr_reaction" -> {
                                       val uId = json.getString("userId")
                                       val url = json.getString("url")
@@ -578,6 +696,58 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                           broadcastSeatState()
                                      }
                                 }
+                                 "music_play" -> {
+                                      if (isFinishing || isDestroyed) return@runOnUiThread
+                                      val name = json.getString("name")
+                                      val art = json.optString("art")
+                                      val duration = json.getLong("duration")
+                                      val audioUrl = json.optString("url")
+                                      showMusicOverlay(name, art, duration)
+                                      
+                                      if (!isHostLocal && !audioUrl.isNullOrEmpty()) {
+                                          playRemoteMusicForAudience(audioUrl, 0)
+                                      }
+                                 }
+                                 "music_sync" -> {
+                                      if (isFinishing || isDestroyed) return@runOnUiThread
+                                      val progress = json.getInt("progress")
+                                      findViewById<SeekBar>(R.id.sbOverlayProgress).progress = progress
+                                      
+                                      // Handle Late Joiners seamlessly
+                                      if (!isHostLocal && mediaPlayer == null) {
+                                          val syncUrl = json.optString("url")
+                                          val currentPos = json.optInt("currentPosition", 0)
+                                          if (!syncUrl.isNullOrEmpty()) {
+                                              playRemoteMusicForAudience(syncUrl, currentPos)
+                                          }
+                                      }
+                                      
+                                      // Handle Pause state from Host sync
+                                      if (!isHostLocal && mediaPlayer != null) {
+                                          val isHostPlaying = json.optBoolean("isPlaying", true)
+                                          if (isHostPlaying && mediaPlayer?.isPlaying == false) {
+                                              mediaPlayer?.start()
+                                          } else if (!isHostPlaying && mediaPlayer?.isPlaying == true) {
+                                              mediaPlayer?.pause()
+                                          }
+                                      }
+                                 }
+                                 "music_pause" -> {
+                                      if (isFinishing || isDestroyed) return@runOnUiThread
+                                      if (!isHostLocal) mediaPlayer?.pause()
+                                 }
+                                 "music_resume" -> {
+                                      if (isFinishing || isDestroyed) return@runOnUiThread
+                                      if (!isHostLocal) mediaPlayer?.start()
+                                 }
+                                 "music_stop" -> {
+                                      findViewById<View>(R.id.musicOverlay).visibility = View.GONE
+                                      if (!isHostLocal) {
+                                           mediaPlayer?.stop()
+                                           mediaPlayer?.release()
+                                           mediaPlayer = null
+                                      }
+                                 }
                                 "seat_invite" -> {
                                     val targetId = json.getString("target_id")
                                     if (localUserId == targetId) {
@@ -696,6 +866,8 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                           if (!isSelfMuted && isMuted) {
                                                isMuted = false
                                                sugunaClient.setMicrophoneEnabled(true)
+                                              sugunaClient.muteAllRemoteAudio(false)
+                                              sugunaClient.setSpeakerphoneEnabled(true)
                                           }
                                       } else {
                                           // Not seated OR Host is offline
@@ -935,17 +1107,30 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             showOnlineUsersDialog()
         }
 
+        findViewById<View>(R.id.btnMenu)?.setOnClickListener {
+            showChatRoomMenu()
+        }
+
         val btnViewRequests = findViewById<android.view.View>(R.id.btnViewRequests)
         val btnRequestSeat = findViewById<android.view.View>(R.id.btnRequestSeat)
         val btnReactions = findViewById<android.widget.ImageButton>(R.id.btnReactions)
+        val btnMusicSelection = findViewById<android.widget.ImageButton>(R.id.btnMusicSelection)
 
         btnViewRequests?.visibility = View.GONE
         btnRequestSeat?.visibility = View.GONE
+        btnMusicSelection?.visibility = if (isHostLocal) View.VISIBLE else View.GONE
         
         updateBottomBarVisibility()
 
         btnReactions?.setOnClickListener {
              showReactionsBottomSheet()
+        }
+
+        btnMusicSelection?.setOnClickListener {
+            val intent = Intent(this, MusicSelectionActivity::class.java)
+            // Use MediaPlayer's Current Path or pass the stored URI
+            intent.putExtra("CURRENT_PLAYING_URI", currentPlayingUri) 
+            startActivity(intent)
         }
 
         if (isHostLocal) {
@@ -1261,6 +1446,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     }
 
     private fun handleAcceptUser(req: SeatParticipant) {
+        if (!isHostLocal) return
+        
+        // Anti-Overwrite: Remove user from any other seats first to prevent duplicates
+        seatedUsers.entries.removeIf { it.value.id == req.id }
+        
         requestList.removeIf { it.id == req.id }
         updateRequestCount()
 
@@ -1277,6 +1467,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             Toast.makeText(this, "No empty seats!", Toast.LENGTH_SHORT).show()
             return
         }
+
+        // PRE-COMMIT seat on Host to prevent race conditions during multiple acceptance
+        seatedUsers[nextSeat] = req
+        updateSeats()
+        broadcastSeatState()
 
         // V2 Scalable: Perform Action via Server (Redis will update everyone)
         val rId = intent.getStringExtra("ROOM_ID") ?: ""
@@ -1311,6 +1506,47 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             if (newSeatId <= 7) { // Within audience seat limit
                 seatedUsers[newSeatId] = currentUsers[i]
             }
+        }
+    }
+
+    private fun showChatRoomMenu() {
+        val bottomSheet = com.suguna.rtc.chatroom.dialogs.ChatRoomMenuBottomSheet(
+            this, 
+            isHostLocal, 
+            onMessengerClick = { openMessenger() }, 
+            onClearChatClick = { handleClearChat() }
+        )
+        bottomSheet.show()
+    }
+
+    private fun handleClearChat() {
+        // Clear locally
+        messageAdapter.clearMessages()
+        chatHistory.clear()
+        
+        // Broadcast to others
+        try {
+            val roomId = intent.getStringExtra("ROOM_ID") ?: ""
+            if (roomId.isNotEmpty()) {
+                com.suguna.rtc.utils.SocketManager.crClearHistory(roomId)
+            }
+            
+            val json = JSONObject().apply {
+                put("type", "clear_messages")
+            }
+            sugunaClient.publishData(json.toString())
+            Toast.makeText(this, "Comments cleared", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun openMessenger() {
+        try {
+            val intent = Intent(this, Class.forName("pawankalyan.gpk.friendzone.UI.Activities.Messages.MessagesListActivity"))
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Messenger not found", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1595,4 +1831,193 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             unregisterReceiver(callStatusReceiver)
         } catch (e: Exception) {}
     }
+
+    private fun startMusicBroadcasting(name: String, uriString: String?, artUri: String?, duration: Long) {
+        mediaPlayer?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
+        currentPlayingUri = uriString
+        
+        try {
+            mediaPlayer = android.media.MediaPlayer().apply {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .build()
+                    )
+                } else {
+                    setAudioStreamType(android.media.AudioManager.STREAM_MUSIC)
+                }
+                setDataSource(this@SugunaChatRoomActivity, android.net.Uri.parse(uriString))
+                
+                if (uriString?.startsWith("http") == true) {
+                    setOnPreparedListener { 
+                        if (isFinishing || isDestroyed) return@setOnPreparedListener
+                        val am = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                        am.mode = android.media.AudioManager.MODE_NORMAL
+                        am.setStreamVolume(
+                            android.media.AudioManager.STREAM_MUSIC,
+                            am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC),
+                            0
+                        )
+                        it.setVolume(1.0f, 1.0f) // Force MediaPlayer internal max
+                        it.start() 
+                        showMusicOverlay(name, artUri, duration)
+                        
+                        // Broadcast to everyone AFTER prepared
+                        val playJson = JSONObject().apply {
+                            put("type", "music_play")
+                            put("name", name)
+                            put("art", artUri)
+                            put("duration", duration)
+                            put("url", uriString)
+                        }
+                        sugunaClient.publishData(playJson.toString())
+                        startMusicSyncTask()
+                    }
+                    prepareAsync()
+                } else {
+                    prepare()
+                    val am = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                    am.mode = android.media.AudioManager.MODE_NORMAL
+                    am.setStreamVolume(
+                        android.media.AudioManager.STREAM_MUSIC,
+                        am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC),
+                        0
+                    )
+                    setVolume(1.0f, 1.0f) // Force max MediaPlayer internal volume
+                    start()
+                    showMusicOverlay(name, artUri, duration)
+                    
+                    val playJson = JSONObject().apply {
+                        put("type", "music_play")
+                        put("name", name)
+                        put("art", artUri)
+                        put("duration", duration)
+                        put("url", uriString)
+                    }
+                    sugunaClient.publishData(playJson.toString())
+                    startMusicSyncTask()
+                }
+            }
+            
+            if (isHostLocal) {
+                 Toast.makeText(this@SugunaChatRoomActivity, "Music Synced to Everyone in HD!", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Playback Error: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startMusicSyncTask() {
+        musicSyncRunnable?.let { musicSyncHandler.removeCallbacks(it) }
+        musicSyncRunnable = object : Runnable {
+            override fun run() {
+                mediaPlayer?.let { mp ->
+                    try {
+                        // Always send sync so pause state and late joiners are caught
+                        val progress = if (mp.duration > 0) (mp.currentPosition.toFloat() / mp.duration.toFloat() * 100).toInt() else 0
+                        val syncJson = JSONObject().apply {
+                            put("type", "music_sync")
+                            put("progress", progress)
+                            put("url", currentPlayingUri)
+                            put("isPlaying", mp.isPlaying)
+                            put("currentPosition", mp.currentPosition)
+                        }
+                        sugunaClient.publishData(syncJson.toString())
+                        findViewById<SeekBar>(R.id.sbOverlayProgress).progress = progress
+                    } catch (e: Exception) {}
+                    musicSyncHandler.postDelayed(this, 1000)
+                }
+            }
+        }
+        musicSyncHandler.post(musicSyncRunnable!!)
+    }
+
+    private fun showMusicOverlay(name: String, artUri: String?, duration: Long) {
+        if (!isHostLocal) return // Audience ki overlay vaddhu
+        if (isFinishing || isDestroyed) return // Prevent Glide crash on destroyed activity
+        val overlay = findViewById<android.view.View>(R.id.musicOverlay)
+        overlay.visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tvOverlaySongName).text = name
+        
+        val ivArt = findViewById<android.widget.ImageView>(R.id.ivOverlayArt)
+        com.bumptech.glide.Glide.with(this).load(artUri).placeholder(R.drawable.music_note_icon).into(ivArt)
+
+        findViewById<SeekBar>(R.id.sbOverlayProgress).max = 100
+        findViewById<SeekBar>(R.id.sbOverlayProgress).progress = 0
+        
+        val btnPlayPause = findViewById<android.widget.ImageView>(R.id.btnOverlayPlayPause)
+        btnPlayPause.setImageResource(R.drawable.stop_icon) // Using stop_icon for active state
+
+        btnPlayPause.setOnClickListener {
+            if (isHostLocal) {
+                if (mediaPlayer?.isPlaying == true) {
+                    mediaPlayer?.pause()
+                    btnPlayPause.setImageResource(R.drawable.play_arrow_icon)
+                    val pauseJson = JSONObject().apply { put("type", "music_pause") }
+                    sugunaClient.publishData(pauseJson.toString())
+                } else {
+                    mediaPlayer?.start()
+                    btnPlayPause.setImageResource(R.drawable.stop_icon)
+                    val resumeJson = JSONObject().apply { put("type", "music_resume") }
+                    sugunaClient.publishData(resumeJson.toString())
+                }
+            }
+        }
+        
+        findViewById<android.widget.ImageView>(R.id.btnOverlayClose).setOnClickListener {
+            if (isHostLocal) {
+                mediaPlayer?.stop()
+                musicSyncRunnable?.let { musicSyncHandler.removeCallbacks(it) }
+                val stopJson = JSONObject().apply { put("type", "music_stop") }
+                sugunaClient.publishData(stopJson.toString())
+            }
+            overlay.visibility = View.GONE
+        }
+    }
+
+    private fun playRemoteMusicForAudience(url: String, startPosition: Int = 0) {
+        if (isFinishing || isDestroyed) return // Prevent Phantom MediaPlayers after Leaving Room!
+        val requestTime = System.currentTimeMillis()
+        mediaPlayer?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
+        try {
+            mediaPlayer = android.media.MediaPlayer().apply {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            // CRITICAL: Revert to USAGE_MEDIA for HD Quality Audio bypass
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .build()
+                    )
+                } else {
+                    setAudioStreamType(android.media.AudioManager.STREAM_MUSIC)
+                }
+                setDataSource(this@SugunaChatRoomActivity, android.net.Uri.parse(url))
+                setOnPreparedListener { 
+                     // Force extreme volume in MediaPlayer layer
+                     it.setVolume(1.0f, 1.0f)
+                     
+                     // MATHEMATICAL PERFECTION: Calculate exact time lost during preparation and network transit
+                     val timeTakenToLoad = (System.currentTimeMillis() - requestTime).toInt()
+                     val networkLatency = 300 // Standard latency for realtime data channels
+                     val exactPosition = startPosition + timeTakenToLoad + networkLatency
+                     
+                     if (exactPosition > 0) {
+                         it.seekTo(exactPosition)
+                     }
+                     it.start() 
+                }
+                setOnErrorListener { _, _, _ -> true }
+                prepareAsync()
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
 }
+

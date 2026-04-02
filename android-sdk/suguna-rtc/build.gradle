@@ -72,6 +72,9 @@ dependencies {
 
     // Lottie for Reactions
     implementation 'com.airbnb.android:lottie:6.4.0'
+    
+    // AWS S3 for Cloudflare R2 Uploads
+    implementation 'com.amazonaws:aws-android-sdk-s3:2.73.0'
 }
 
 afterEvaluate {

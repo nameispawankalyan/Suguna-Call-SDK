@@ -18,6 +18,12 @@ class SugunaChatRoomMessageAdapter : RecyclerView.Adapter<SugunaChatRoomMessageA
         notifyItemInserted(messages.size - 1)
     }
 
+    fun clearMessages() {
+        val size = messages.size
+        messages.clear()
+        notifyItemRangeRemoved(0, size)
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_chat_room_message, parent, false)
         return MessageViewHolder(view)

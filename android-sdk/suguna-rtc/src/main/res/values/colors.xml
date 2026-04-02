@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="music_primary">#6200EE</color>
+    <color name="music_accent">#03DAC5</color>
+    <color name="music_background">#121212</color>
+    <color name="music_surface">#1E1E1E</color>
+    <color name="music_neon_cyan">#00E5FF</color>
+    <color name="music_neon_purple">#B000FF</color>
+    <color name="music_neon_pink">#FF00E5</color>
+    <color name="music_glass_tint">#30FFFFFF</color>
+    <color name="neon_cyan">#00E5FF</color>
+    <color name="neon_purple">#B000FF</color>
+    <color name="neon_pink">#FF00E5</color>
+</resources>

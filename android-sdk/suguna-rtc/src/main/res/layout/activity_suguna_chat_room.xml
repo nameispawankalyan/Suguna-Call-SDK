@@ -187,6 +187,14 @@
             android:layout_marginBottom="8dp"
             tools:listitem="@layout/item_chat_room_message"/>
 
+        <!-- Music Player Overlay -->
+        <include
+            android:id="@+id/musicOverlay"
+            layout="@layout/layout_music_player_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
         <!-- Bottom Action Bar (Chat Input & Mute Buttons) -->
         <LinearLayout
             android:id="@+id/bottomBar"
@@ -209,6 +217,17 @@
                 android:paddingEnd="16dp"
                 android:textSize="14sp"
                 android:inputType="text"/>
+
+            <ImageButton
+                android:id="@+id/btnMusicSelection"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:padding="11dp"
+                android:src="@drawable/music_note_icon"
+                android:background="@drawable/bg_circle_reaction"
+                android:visibility="gone"
+                android:layout_marginStart="8dp"
+                app:tint="#00E5FF"/>
 
             <ImageButton
                 android:id="@+id/btnReactions"

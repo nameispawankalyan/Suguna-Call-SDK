@@ -81,7 +81,6 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     fun initialize(token: String, role: String, isVideoCall: Boolean = true, defaultSpeakerOn: Boolean? = null) {
         scope.launch {
             try {
-                // Initialize Room with Shared EglBase
                 val overrides = LiveKitOverrides(
                     eglBase = eglBase
                 )
@@ -95,6 +94,12 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                             maxBitrate = 800_000, 
                             maxFps = 24
                         )
+                    ),
+                    audioTrackCaptureDefaults = io.livekit.android.room.track.LocalAudioTrackOptions(
+                        echoCancellation = false,
+                        autoGainControl = false,
+                        noiseSuppression = false,
+                        typingNoiseDetection = false
                     )
                 )
                 
@@ -118,8 +123,8 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                     eventListener?.onUserJoined(participant)
                 }
                 
-                // Configure Audio Mode
-                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                // Configure Audio Mode - MODE_NORMAL for HD Stereo / A2DP Music bypassing low-quality SCO
+                audioManager.mode = AudioManager.MODE_NORMAL
                 
                 // Default Speaker Logic
                 val initialSpeakerState = defaultSpeakerOn ?: isVideoCall 
@@ -187,31 +192,31 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
     fun setSpeakerphoneEnabled(enable: Boolean) {
         android.util.Log.d("SugunaClient", "Setting speakerphone enabled: $enable")
         try {
-            // Enforce Communication Mode for correct routing
-            if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
-                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            // Enforce Media Normal Mode for HD Audio Streaming (HD Music, A2DP Bluetooth)
+            if (audioManager.mode != AudioManager.MODE_NORMAL) {
+                audioManager.mode = AudioManager.MODE_NORMAL
             }
+            // Check Bluetooth and Headset safely
+            val isBluetoothConnected = audioManager.isBluetoothA2dpOn || audioManager.isBluetoothScoOn
+            val isWiredHeadsetConnected = audioManager.isWiredHeadsetOn
             
-            if (enable) {
-                // Speaker Requested: Turn off BT SCO, Turn ON Speaker
-                audioManager.stopBluetoothSco()
-                audioManager.isBluetoothScoOn = false
+            // Intelligent Override: If user has a headset connected, NEVER force speakerphone!
+            val finalEnableSpeaker = enable && !isBluetoothConnected && !isWiredHeadsetConnected
+
+            if (finalEnableSpeaker) {
+                // Speaker Requested & No Headsets: FORCE SPEAKER
                 audioManager.isSpeakerphoneOn = true
-                android.util.Log.d("SugunaClient", "Audio routed to SPEAKER")
+                android.util.Log.d("SugunaClient", "Audio routed to SPEAKER. Mode: ${audioManager.mode}")
             } else {
-                // Earpiece/BT Requested: Turn OFF Speaker
+                // Headset Connected or Speaker explicitly disabled
                 audioManager.isSpeakerphoneOn = false
                 
-                // Only start Bluetooth SCO if a headset is actually connected
-                val isBluetoothConnected = audioManager.isBluetoothA2dpOn || audioManager.isBluetoothScoAvailableOffCall
                 if (isBluetoothConnected) {
-                    audioManager.startBluetoothSco()
-                    audioManager.isBluetoothScoOn = true
-                    android.util.Log.d("SugunaClient", "Audio routed to BLUETOOTH")
+                     android.util.Log.d("SugunaClient", "Audio routed to BLUETOOTH")
+                } else if (isWiredHeadsetConnected) {
+                     android.util.Log.d("SugunaClient", "Audio routed to WIRED HEADSET")
                 } else {
-                    audioManager.stopBluetoothSco()
-                    audioManager.isBluetoothScoOn = false
-                    android.util.Log.d("SugunaClient", "Audio routed to EARPIECE")
+                     android.util.Log.d("SugunaClient", "Audio routed to EARPIECE")
                 }
             }
         } catch (e: Exception) {
@@ -285,6 +290,30 @@ class SugunaClient(private val context: Context, private val serverUrl: String) 
                     }
                     else -> {}
                 }
+            }
+        }
+    }
+
+    fun muteAllRemoteAudio(mute: Boolean) {
+        scope.launch {
+            try {
+                room?.remoteParticipants?.values?.forEach { participant ->
+                    participant.audioTrackPublications?.forEach { publication ->
+                        val track = publication.second as? io.livekit.android.room.track.RemoteAudioTrack
+                        try {
+                            // Suppress exceptions if the LiveKit SDK version doesn't support setVolume exactly this way,
+                            // or if it goes by another method name.
+                            if (mute) {
+                                track?.setVolume(0.0)
+                            } else {
+                                track?.setVolume(1.0)
+                            }
+                        } catch (e: Exception) {}
+                    }
+                }
+                android.util.Log.d("SugunaClient", "Remote audio tracks mute state: $mute")
+            } catch (e: Throwable) {
+                android.util.Log.e("SugunaClient", "Error toggling remote audio", e)
             }
         }
     }

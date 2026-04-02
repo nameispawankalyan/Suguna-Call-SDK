@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/clMusicOverlay"
+    android:layout_width="match_parent"
+    android:layout_height="75dp"
+    android:background="@drawable/bg_glass_player_top_round"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:visibility="gone">
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/ivOverlayArt"
+        android:layout_width="45dp"
+        android:layout_height="45dp"
+        android:src="@drawable/music_note_icon"
+        android:scaleType="centerCrop"
+        android:background="#30FFFFFF"
+        app:shapeAppearanceOverlay="@style/RoundedSoft"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/llOverlayInfo"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        app:layout_constraintStart_toEndOf="@id/ivOverlayArt"
+        app:layout_constraintEnd_toStartOf="@id/llOverlayControls"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView
+            android:id="@+id/tvOverlaySongName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Now Playing..."
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="marquee" />
+
+        <SeekBar
+            android:id="@+id/sbOverlayProgress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:progress="30"
+            android:max="100"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:thumb="@android:color/transparent"
+            android:progressDrawable="@drawable/custom_seekbar_progress"
+            android:layout_marginTop="2dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/llOverlayControls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <ImageView
+            android:id="@+id/btnOverlayPlayPause"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/stop_icon"
+            app:tint="@color/neon_cyan"
+            android:layout_marginEnd="16dp"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <ImageView
+            android:id="@+id/btnOverlayClose"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/close_icon"
+            app:tint="#FF5252"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
