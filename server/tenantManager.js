@@ -12,9 +12,9 @@ class TenantManager {
             "friendzone_001": {
                 name: "FriendZone",
                 serviceAccount: "./configs/friendzone.json",
-                databaseURL: "https://friendzone-a40d9-default-rtdb.asia-southeast1.firebasedatabase.app",
+                databaseURL: "https://friendzone-1234-default-rtdb.asia-southeast1.firebasedatabase.app",
                 encryptionKey: "90083A40204036E21A98F25FDAD274D4A65E4A1A2F70C0B37013DD3FCDE3E277",
-                webhookUrl: "https://asia-south1-friendzone-a40d9.cloudfunctions.net/sugunaWebhook"
+                webhookUrl: "https://asia-south1-friendzone-1234.cloudfunctions.net/sugunaWebhook"
             },
         };
     }
