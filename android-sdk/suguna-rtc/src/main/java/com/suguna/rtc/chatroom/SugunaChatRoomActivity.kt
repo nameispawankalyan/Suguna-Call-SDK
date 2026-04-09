@@ -183,8 +183,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
         if (isHostLocal) {
             try {
-                 val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
-                 db.collection("BestieRooms").document(localUserId).update("status", "Active")
+                 val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("friendzone")
+                 db.collection("BestieRooms").document(localUserId).update(
+                     mapOf("status" to "Active", "onlineCount" to 1)
+                 )
             } catch (e: Exception) {}
         }
 
@@ -297,8 +299,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
             if (isHostLocal) {
                 try {
-                    val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
-                    db.collection("BestieRooms").document(localUserId).update("status", "Offline")
+                    val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("friendzone")
+                    db.collection("BestieRooms").document(localUserId).update(
+                        mapOf("status" to "Offline", "onlineCount" to 0)
+                    )
                 } catch (e: Exception) {}
             }
             
@@ -1405,7 +1409,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         
         if (isHostLocal && !isFinishing && !isDestroyed) {
              try {
-                  val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
+                  val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("friendzone")
                   db.collection("BestieRooms").document(localUserId).update(
                       mapOf("onlineCount" to count, "status" to "Active")
                   )

@@ -97,7 +97,7 @@ class SugunaChatRoomService : Service() {
         super.onTaskRemoved(rootIntent)
         if (isHost && currentUserId.isNotEmpty()) {
             try {
-                val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("frienzone")
+                val db = com.google.firebase.firestore.FirebaseFirestore.getInstance("friendzone")
                 db.collection("BestieRooms").document(currentUserId).update("status", "Offline")
             } catch (e: Exception) { e.printStackTrace() }
         }
