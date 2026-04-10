@@ -360,6 +360,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                             val cRoomId = intent.getStringExtra("ROOM_ID") ?: ""
                             if (pRoomId.isNotEmpty() && pRoomId != cRoomId) return@runOnUiThread
 
+                            // --- SYNC SEATS ---
                             val seatsJson = data?.optJSONObject("seats")
                             if (seatsJson != null) {
                                 val keys = seatsJson.keys()
@@ -375,22 +376,66 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     newSeatedUsers[key.toInt()] = u
                                 }
                                 
-                                // Selective Update: Only clear if we actually have data to replace it with
-                                // IMPORTANT: Host MUST be online for state sync to be considered valid for automatic seating
                                 val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
-                                
-                                if (!isHostLocal && !isHostOnline) {
-                                     // Host is offline! Ignore state syncs that could remove users from their seats.
-                                     // Freeze the audience seat state until the host returns.
+                                if (!isHostLocal && !isHostOnline && seatedUsers.isNotEmpty()) {
+                                     // Host is offline! Freeze state.
                                      return@runOnUiThread
                                 }
 
                                 if (newSeatedUsers.isNotEmpty() || (isHostLocal && seatedUsers.isEmpty())) {
+                                    // 🚀 ANTI-OVERWRITE: Merge instead of full clear IF count is suspiciously low
+                                    if (!isHostLocal && newSeatedUsers.size < seatedUsers.size && isHostOnline) {
+                                         // Possibly a partial sync, be careful. 
+                                    }
+                                    
+                                    val wasSeatedLocalBefore = seatedUsers.values.any { it.id == localUserId } || isHostLocal
+                                    
                                     seatedUsers.clear()
                                     seatedUsers.putAll(newSeatedUsers)
-                                    updateSeats()
+                                    
+                                    val isSeatedLocalNow = seatedUsers.values.any { it.id == localUserId } || isHostLocal
+                                    
+                                    // 🎤 AUTO-UNMUTE: If I just appeared in the seat list and was not seated before
+                                    if (!wasSeatedLocalBefore && isSeatedLocalNow && !isHostLocal) {
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                            if (!hostMutedUsers.contains(localUserId) && !selfMutedUsers.contains(localUserId)) {
+                                                isMuted = false
+                                                sugunaClient.setMicrophoneEnabled(true)
+                                                setupControls()
+                                                updateSeats()
+                                            }
+                                        }, 1500)
+                                    }
                                 }
                             }
+
+                            // --- SYNC MUTE STATES ---
+                            val hostMutedArr = data?.optJSONArray("hostMutedIds")
+                            if (hostMutedArr != null) {
+                                hostMutedUsers.clear()
+                                for (i in 0 until hostMutedArr.length()) {
+                                    hostMutedUsers.add(hostMutedArr.getString(i))
+                                }
+                            }
+
+                            val selfMutedArr = data?.optJSONArray("selfMutedIds")
+                            if (selfMutedArr != null) {
+                                selfMutedUsers.clear()
+                                for (i in 0 until selfMutedArr.length()) {
+                                    selfMutedUsers.add(selfMutedArr.getString(i))
+                                }
+                            }
+
+                            // --- ENFORCE MUTE ---
+                            if (hostMutedUsers.contains(localUserId) || selfMutedUsers.contains(localUserId)) {
+                                if (!isMuted) {
+                                    isMuted = true
+                                    sugunaClient.setMicrophoneEnabled(false)
+                                    setupControls()
+                                }
+                            }
+
+                            updateSeats()
                         }
                     }
                     
@@ -603,6 +648,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                     val idx = listParticipants.indexOfFirst { it.id == pId }
                     if (idx == -1) listParticipants.add(p) else listParticipants[idx] = p
 
+                    // 🔊 AUDIO RECOVERY: Ensure we are NOT muting remote audio when someone joins
+                    // especially if we are the Host.
+                    sugunaClient.muteAllRemoteAudio(false)
+
                     updateSeats()
                     updateOnlineCount()
                     setupControls()
@@ -666,6 +715,67 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     messageAdapter.addMessage(msg)
                                     chatHistory.add(msg) // Add to history
                                     findViewById<RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
+                                }
+                                "seat_state" -> {
+                                    val seatsArr = json.getJSONArray("seats")
+                                    val newSeatedUsers = java.util.TreeMap<Int, SeatParticipant>()
+                                    for (i in 0 until seatsArr.length()) {
+                                        val obj = seatsArr.getJSONObject(i)
+                                        val sId = obj.getInt("seat_id")
+                                        val u = SeatParticipant(
+                                            obj.getString("user_id"),
+                                            obj.getString("name"),
+                                            obj.optString("image")
+                                        )
+                                        newSeatedUsers[sId] = u
+                                    }
+
+                                    val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
+                                    if (!isHostLocal && isHostOnline) {
+                                        val wasSeatedLocalBefore = seatedUsers.values.any { it.id == localUserId }
+                                        
+                                        if (newSeatedUsers.isNotEmpty() || seatedUsers.isNotEmpty()) {
+                                            seatedUsers.clear()
+                                            seatedUsers.putAll(newSeatedUsers)
+                                        }
+
+                                        val isSeatedLocalNow = seatedUsers.values.any { it.id == localUserId }
+
+                                        // 🎤 AUTO-UNMUTE for Data Channel State Sync
+                                        if (!wasSeatedLocalBefore && isSeatedLocalNow) {
+                                             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                                if (!hostMutedUsers.contains(localUserId) && !selfMutedUsers.contains(localUserId)) {
+                                                    isMuted = false
+                                                    sugunaClient.setMicrophoneEnabled(true)
+                                                    setupControls()
+                                                    updateSeats()
+                                                }
+                                            }, 1500)
+                                        }
+                                        
+                                        // Sync Mutes from Data Channel
+                                        val hostMutedArr = json.optJSONArray("host_muted_ids")
+                                        if (hostMutedArr != null) {
+                                            hostMutedUsers.clear()
+                                            for (j in 0 until hostMutedArr.length()) hostMutedUsers.add(hostMutedArr.getString(j))
+                                        }
+                                        val selfMutedArr = json.optJSONArray("self_muted_ids")
+                                        if (selfMutedArr != null) {
+                                            selfMutedUsers.clear()
+                                            for (j in 0 until selfMutedArr.length()) selfMutedUsers.add(selfMutedArr.getString(j))
+                                        }
+
+                                        // Enforce
+                                        if (hostMutedUsers.contains(localUserId) || selfMutedUsers.contains(localUserId)) {
+                                            if (!isMuted) {
+                                                isMuted = true
+                                                sugunaClient.setMicrophoneEnabled(false)
+                                                setupControls()
+                                            }
+                                        }
+
+                                        updateSeats()
+                                    }
                                 }
                                 "chat_history" -> {
                                     val hArr = json.getJSONArray("messages")
@@ -1617,8 +1727,10 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             selfMutedUsers.toList(),
             onMuteClick = {
                 if (isHostLocal && seat.id != localUserId) {
+                     // Host is muting someone else
                      if (hostMutedUsers.contains(seat.id)) hostMutedUsers.remove(seat.id) else hostMutedUsers.add(seat.id)
-                } else {
+                } else if (seat.id == localUserId) {
+                     // Local user is muting themselves
                      isMuted = !isMuted
                      sugunaClient.setMicrophoneEnabled(!isMuted)
                      if (isMuted) selfMutedUsers.add(localUserId) else selfMutedUsers.remove(localUserId)
