@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import android.util.Log
 import com.suguna.rtc.R
 import com.suguna.rtc.SugunaClient
 import android.widget.ImageView
@@ -238,6 +239,30 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         } else {
             this.registerReceiver(musicReceiver, mFilter)
         }
+
+        animationOverlay = findViewById(R.id.animationOverlay)
+        
+        // Robust Socket Listener Registration
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            val sock = com.suguna.rtc.utils.SocketManager.getSocket()
+            if (sock != null) {
+                sock.off("cr_gift_received") // Clear old
+                sock.on("cr_gift_received") { args: Array<Any>? ->
+                    val data = args?.getOrNull(0) as? org.json.JSONObject
+                    if (data != null) {
+                        val rId = data.optString("receiverId")
+                        val sId = data.optString("senderId")
+                        val gUrl = data.optString("giftUrl")
+                        
+                        runOnUiThread {
+                             // Trigger Fast Animation
+                             giftQueue.add(GiftTask(sId, rId, gUrl))
+                             processNextGift()
+                        }
+                    }
+                }
+            }
+        }, 1500)
     }
 
     private fun startChatRoomService() {
@@ -716,66 +741,14 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     chatHistory.add(msg) // Add to history
                                     findViewById<RecyclerView>(R.id.rvMessages).scrollToPosition(messageAdapter.itemCount - 1)
                                 }
-                                "seat_state" -> {
-                                    val seatsArr = json.getJSONArray("seats")
-                                    val newSeatedUsers = java.util.TreeMap<Int, SeatParticipant>()
-                                    for (i in 0 until seatsArr.length()) {
-                                        val obj = seatsArr.getJSONObject(i)
-                                        val sId = obj.getInt("seat_id")
-                                        val u = SeatParticipant(
-                                            obj.getString("user_id"),
-                                            obj.getString("name"),
-                                            obj.optString("image")
-                                        )
-                                        newSeatedUsers[sId] = u
-                                    }
-
-                                    val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
-                                    if (!isHostLocal && isHostOnline) {
-                                        val wasSeatedLocalBefore = seatedUsers.values.any { it.id == localUserId }
-                                        
-                                        if (newSeatedUsers.isNotEmpty() || seatedUsers.isNotEmpty()) {
-                                            seatedUsers.clear()
-                                            seatedUsers.putAll(newSeatedUsers)
-                                        }
-
-                                        val isSeatedLocalNow = seatedUsers.values.any { it.id == localUserId }
-
-                                        // 🎤 AUTO-UNMUTE for Data Channel State Sync
-                                        if (!wasSeatedLocalBefore && isSeatedLocalNow) {
-                                             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                                if (!hostMutedUsers.contains(localUserId) && !selfMutedUsers.contains(localUserId)) {
-                                                    isMuted = false
-                                                    sugunaClient.setMicrophoneEnabled(true)
-                                                    setupControls()
-                                                    updateSeats()
-                                                }
-                                            }, 1500)
-                                        }
-                                        
-                                        // Sync Mutes from Data Channel
-                                        val hostMutedArr = json.optJSONArray("host_muted_ids")
-                                        if (hostMutedArr != null) {
-                                            hostMutedUsers.clear()
-                                            for (j in 0 until hostMutedArr.length()) hostMutedUsers.add(hostMutedArr.getString(j))
-                                        }
-                                        val selfMutedArr = json.optJSONArray("self_muted_ids")
-                                        if (selfMutedArr != null) {
-                                            selfMutedUsers.clear()
-                                            for (j in 0 until selfMutedArr.length()) selfMutedUsers.add(selfMutedArr.getString(j))
-                                        }
-
-                                        // Enforce
-                                        if (hostMutedUsers.contains(localUserId) || selfMutedUsers.contains(localUserId)) {
-                                            if (!isMuted) {
-                                                isMuted = true
-                                                sugunaClient.setMicrophoneEnabled(false)
-                                                setupControls()
-                                            }
-                                        }
-
-                                        updateSeats()
-                                    }
+                                // Seat state handled below to prevent duplication
+                                "mic_update" -> {
+                                    val uId = json.getString("user_id")
+                                    val isMuted = json.getBoolean("is_muted")
+                                    if (isMuted) selfMutedUsers.add(uId) else selfMutedUsers.remove(uId)
+                                    updateSeats()
+                                    // 🔥 IF I AM HOST, broadcast this change to everyone so late joiners see it
+                                    if (isHostLocal) broadcastSeatState()
                                 }
                                 "chat_history" -> {
                                     val hArr = json.getJSONArray("messages")
@@ -945,55 +918,55 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                       }
                                  }
                                  "seat_state" -> {
-                                     val sArray = json.getJSONArray("seats")
-                                     seatedUsers.clear()
-                                    for (i in 0 until sArray.length()) {
-                                        val obj = sArray.getJSONObject(i)
-                                        val sId = obj.getInt("seat_id")
-                                        val u = SeatParticipant(obj.getString("user_id"), obj.getString("name"), obj.optString("image"))
-                                        seatedUsers[sId] = u
-                                    }
-
-                                     // Forced Mutes
-                                     val muteArr = json.optJSONArray("host_muted_ids")
-                                     hostMutedUsers.clear()
-                                     if (muteArr != null) {
-                                         for (j in 0 until muteArr.length()) hostMutedUsers.add(muteArr.getString(j))
-                                     }
-
-                                     val selfMuteArr = json.optJSONArray("self_muted_ids")
-                                     selfMutedUsers.clear()
-                                     if (selfMuteArr != null) {
-                                         for (j in 0 until selfMuteArr.length()) selfMutedUsers.add(selfMuteArr.getString(j))
-                                     }
-
-                                     val isSeatedLocal = seatedUsers.values.any { it.id == localUserId }
                                      val isHostOnline = listParticipants.any { it.id == roomOwnerId } || isHostLocal
-
-                                     if (hostMutedUsers.contains(localUserId)) {
-                                         if (!isMuted) {
-                                             isMuted = true
-                                             sugunaClient.setMicrophoneEnabled(false)
+                                     if (!isHostLocal && isHostOnline) {
+                                         val sArray = json.getJSONArray("seats")
+                                         seatedUsers.clear()
+                                         for (i in 0 until sArray.length()) {
+                                             val obj = sArray.getJSONObject(i)
+                                             val sId = obj.getInt("seat_id")
+                                             val u = SeatParticipant(obj.getString("user_id"), obj.getString("name"), obj.optString("image"))
+                                             seatedUsers[sId] = u
                                          }
-                                      } else if (isHostLocal || (isSeatedLocal && isHostOnline)) {
-                                          val isSelfMuted = selfMutedUsers.contains(localUserId)
-                                          if (!isSelfMuted && isMuted) {
-                                               isMuted = false
-                                               sugunaClient.setMicrophoneEnabled(true)
-                                              sugunaClient.muteAllRemoteAudio(false)
-                                              sugunaClient.setSpeakerphoneEnabled(true)
-                                          }
-                                      } else {
-                                          // Not seated OR Host is offline
-                                          if (!isMuted) {
-                                               isMuted = true
-                                               sugunaClient.setMicrophoneEnabled(false)
-                                          }
-                                       }
 
-                                       updateSeats()
-                                       setupControls()
-                                       updateRoomOwnerImage()
+                                         // Forced Mutes
+                                         val muteArr = json.optJSONArray("host_muted_ids")
+                                         hostMutedUsers.clear()
+                                         if (muteArr != null) {
+                                             for (j in 0 until muteArr.length()) hostMutedUsers.add(muteArr.getString(j))
+                                         }
+
+                                         val selfMuteArr = json.optJSONArray("self_muted_ids")
+                                         selfMutedUsers.clear()
+                                         if (selfMuteArr != null) {
+                                             for (j in 0 until selfMuteArr.length()) selfMutedUsers.add(selfMuteArr.getString(j))
+                                         }
+
+                                         val isSeatedLocal = seatedUsers.values.any { it.id == localUserId }
+
+                                         if (hostMutedUsers.contains(localUserId)) {
+                                             if (!isMuted) {
+                                                 isMuted = true
+                                                 sugunaClient.setMicrophoneEnabled(false)
+                                             }
+                                          } else if (isSeatedLocal && isHostOnline) {
+                                              val isSelfMuted = selfMutedUsers.contains(localUserId)
+                                              if (!isSelfMuted && isMuted) {
+                                                   isMuted = false
+                                                   sugunaClient.setMicrophoneEnabled(true)
+                                              }
+                                          } else {
+                                              // Not seated OR Host is offline
+                                              if (!isMuted) {
+                                                   isMuted = true
+                                                   sugunaClient.setMicrophoneEnabled(false)
+                                              }
+                                           }
+
+                                           updateSeats()
+                                           setupControls()
+                                           updateRoomOwnerImage()
+                                      }
                                   }
                                  "seat_leave" -> {
                                       val targetId = json.getString("user_id")
@@ -1245,6 +1218,42 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             // Use MediaPlayer's Current Path or pass the stored URI
             intent.putExtra("CURRENT_PLAYING_URI", currentPlayingUri) 
             startActivity(intent)
+        }
+
+        findViewById<android.widget.ImageButton>(R.id.btnGift)?.setOnClickListener {
+            val seatedIds = ArrayList<String>()
+            val seatedNames = ArrayList<String>()
+            val seatedImages = ArrayList<String>()
+            
+            // 1. ALWAYS ADD HOST/OWNER FIRST
+            if (!roomOwnerId.isNullOrEmpty()) {
+                val host = listParticipants.find { it.id == roomOwnerId }
+                val hostName = host?.name ?: roomOwnerName ?: "Host"
+                
+                seatedIds.add(roomOwnerId)
+                seatedNames.add(hostName)
+                seatedImages.add(host?.image ?: "")
+            }
+
+            // 2. Add other seated users
+            for (p in seatedUsers.values) {
+                if (p.id != roomOwnerId) { // Prevent duplicates
+                    seatedIds.add(p.id)
+                    seatedNames.add(p.name)
+                    seatedImages.add(p.image ?: "")
+                }
+            }
+            
+            val intent = android.content.Intent("com.suguna.rtc.ACTION_SHOW_GIFTS").apply {
+                putExtra("RECEIVER_ID", roomOwnerId)
+                putExtra("IS_ROOM", true)
+                putExtra("ROOM_ID", this@SugunaChatRoomActivity.intent.getStringExtra("ROOM_ID") ?: roomOwnerId)
+                putExtra("CONTEXT", "SugunaRoom")
+                putStringArrayListExtra("PARTICIPANT_IDS", seatedIds)
+                putStringArrayListExtra("PARTICIPANT_NAMES", seatedNames)
+                putStringArrayListExtra("PARTICIPANT_IMAGES", seatedImages)
+            }
+            sendBroadcast(intent)
         }
 
         if (isHostLocal) {
@@ -1627,6 +1636,15 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         val bottomSheet = com.suguna.rtc.chatroom.dialogs.ChatRoomMenuBottomSheet(
             this, 
             isHostLocal, 
+            onEarningsClick = {
+                try {
+                    val intent = Intent()
+                    intent.setClassName(this, "pawankalyan.gpk.friendzone.UI.Activities.EarningsActivity")
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Opening Creator Dashboard...", Toast.LENGTH_SHORT).show()
+                }
+            },
             onMessengerClick = { openMessenger() }, 
             onClearChatClick = { handleClearChat() }
         )
@@ -1734,9 +1752,17 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                      isMuted = !isMuted
                      sugunaClient.setMicrophoneEnabled(!isMuted)
                      if (isMuted) selfMutedUsers.add(localUserId) else selfMutedUsers.remove(localUserId)
+                     
+                     // Sync to others
+                     val muteJson = org.json.JSONObject().apply {
+                         put("type", "mic_update")
+                         put("user_id", localUserId)
+                         put("is_muted", isMuted)
+                     }
+                     sugunaClient.publishData(muteJson.toString())
                 }
                 updateSeats()
-                broadcastSeatState()
+                if (isHostLocal) broadcastSeatState()
             },
             onRemoveClick = {
                 invitedUsers.remove(seat.id)
@@ -2096,6 +2122,141 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         }
     }
 
+    private var animationOverlay: android.widget.FrameLayout? = null
+    private val giftQueue: java.util.Queue<GiftTask> = java.util.LinkedList()
+    private var isGiftAnimating = false
+
+    private fun processNextGift() {
+        if (isGiftAnimating || giftQueue.isEmpty()) return
+        
+        isGiftAnimating = true
+        val task = giftQueue.poll() ?: return
+        
+        val rootView = findViewById<android.view.ViewGroup>(android.R.id.content)
+        if (rootView == null) {
+            isGiftAnimating = false
+            return
+        }
+
+        // DIRECTLY START ANIMATION (Since URLs are HTTPS as per latest logs)
+        startActualAnimation(task.giftUrl, task.receiverId, rootView)
+    }
+
+    private fun startActualAnimation(giftUrl: String, receiverId: String, rootView: android.view.ViewGroup) {
+        val urlLower = giftUrl.lowercase()
+        val isLottie = urlLower.contains(".json") || urlLower.contains(".lottie")
+        val context = this
+        
+        if (isLottie) {
+            val lottieView = com.airbnb.lottie.LottieAnimationView(context).apply {
+                layoutParams = android.widget.FrameLayout.LayoutParams(500, 500)
+                alpha = 0f
+            }
+            rootView.addView(lottieView)
+            lottieView.bringToFront()
+            
+            com.airbnb.lottie.LottieCompositionFactory.fromUrl(context, giftUrl).addListener { composition: com.airbnb.lottie.LottieComposition ->
+                lottieView.setComposition(composition)
+                lottieView.playAnimation()
+                lottieView.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
+                runMovementAnimation(lottieView, receiverId, rootView)
+            }.addFailureListener { e: Throwable ->
+                Log.e("SugunaGift", "Lottie Load Failed: ${e.message}")
+                isGiftAnimating = false
+                processNextGift()
+            }
+        } else {
+            val imageView = ImageView(context).apply {
+                layoutParams = android.widget.FrameLayout.LayoutParams(500, 500)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                alpha = 0f
+            }
+            rootView.addView(imageView)
+            imageView.bringToFront()
+            
+            com.bumptech.glide.Glide.with(context)
+                .load(giftUrl)
+                .into(object : com.bumptech.glide.request.target.SimpleTarget<android.graphics.drawable.Drawable>() {
+                    override fun onResourceReady(resource: android.graphics.drawable.Drawable, transition: com.bumptech.glide.request.transition.Transition<in android.graphics.drawable.Drawable>?) {
+                        imageView.setImageDrawable(resource)
+                        runMovementAnimation(imageView, receiverId, rootView)
+                    }
+                })
+        }
+    }
+
+    private fun runMovementAnimation(giftView: android.view.View, receiverId: String, rootView: android.view.ViewGroup) {
+        val screenWidth = resources.displayMetrics.widthPixels.toFloat()
+        val screenHeight = resources.displayMetrics.heightPixels.toFloat()
+
+        // START FROM BOTTOM CENTER (Above Input Bar)
+        giftView.x = (screenWidth / 2) - 250
+        giftView.y = screenHeight - 850
+
+        giftView.animate()
+            .alpha(1f)
+            .scaleX(1.3f)
+            .scaleY(1.3f)
+            .setDuration(1200)
+            .withEndAction {
+                val receiverView = getUserView(receiverId) ?: findViewById<View>(R.id.ivRoomOwner)
+                val targetPos = IntArray(2)
+                receiverView.getLocationInWindow(targetPos)
+                
+                val endX = targetPos[0].toFloat() + (receiverView.width / 2) - 250
+                val endY = targetPos[1].toFloat() + (receiverView.height / 2) - 250
+
+                // PREMIMUM BEZIER CURVE IMPLEMENTATION
+                val path = android.graphics.Path()
+                path.moveTo(giftView.x, giftView.y)
+                
+                // Curve calculation: control point is above the midpoint to create an arc
+                val controlX = (giftView.x + endX) / 2
+                val controlY = java.lang.Math.min(giftView.y, endY) - 500 // Height of the arc
+                path.quadTo(controlX, controlY, endX, endY)
+
+                val animator = android.animation.ObjectAnimator.ofFloat(giftView, View.X, View.Y, path)
+                animator.duration = 1800
+                
+                // NO mid-flight alpha/scale hide. Stay visible until seat.
+                giftView.animate()
+                    .scaleX(0.3f) // LARGER END SCALE
+                    .scaleY(0.3f)
+                    .alpha(1f) // STAY FULLY VISIBLE
+                    .setDuration(1800)
+                    .start()
+
+                animator.addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        giftView.animate().alpha(0f).setDuration(200).withEndAction {
+                            rootView.removeView(giftView)
+                            isGiftAnimating = false
+                            processNextGift()
+                        }.start()
+                    }
+                })
+                animator.start()
+            }
+            .start()
+    }
+
+    private fun getUserView(userId: String): View? {
+        if (userId == roomOwnerId) {
+            return findViewById(R.id.ivRoomOwner)
+        }
+        
+        val rv = findViewById<RecyclerView>(R.id.rvSeats) ?: return null
+        val lm = rv.layoutManager as? GridLayoutManager ?: return null
+        
+        for (i in 0 until seatAdapter.itemCount) {
+             val seatId = seatAdapter.getSeatAt(i)?.id ?: ""
+             if (seatId == userId) {
+                 return lm.findViewByPosition(i)
+             }
+        }
+        return null
+    }
+
     private fun playRemoteMusicForAudience(url: String, startPosition: Int = 0) {
         if (isFinishing || isDestroyed) return // Prevent Phantom MediaPlayers after Leaving Room!
         val requestTime = System.currentTimeMillis()
@@ -2135,5 +2296,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
             }
         } catch (e: Exception) { e.printStackTrace() }
     }
+
+    data class GiftTask(val senderId: String, val receiverId: String, val giftUrl: String)
 }
 

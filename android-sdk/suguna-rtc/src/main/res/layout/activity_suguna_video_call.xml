@@ -54,7 +54,9 @@
 
                 <ImageButton android:id="@+id/btnMute" android:layout_width="55dp" android:layout_height="55dp" android:layout_marginEnd="30dp" android:background="@drawable/bg_circle_glass_button" android:padding="14dp" android:src="@drawable/ic_mic_on" app:tint="#FFFFFF" />
 
-                <ImageButton android:id="@+id/btnSwitchCamera" android:layout_width="55dp" android:layout_height="55dp" android:background="@drawable/bg_circle_glass_button" android:padding="14dp" android:src="@android:drawable/ic_menu_camera" app:tint="#FFFFFF" />
+                <ImageButton android:id="@+id/btnSwitchCamera" android:layout_width="55dp" android:layout_height="55dp" android:background="@drawable/bg_circle_glass_button" android:padding="14dp" android:src="@android:drawable/ic_menu_camera" app:tint="#FFFFFF" android:layout_marginEnd="30dp"/>
+
+                <ImageButton android:id="@+id/btnGift" android:layout_width="55dp" android:layout_height="55dp" android:background="@drawable/bg_circle_glass_button" android:padding="10dp" android:src="@drawable/gift_icon" android:scaleType="centerInside" />
 
             </LinearLayout>
 

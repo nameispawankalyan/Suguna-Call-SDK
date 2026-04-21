@@ -9,6 +9,19 @@ const Encryption = require('./encryption');
 const tenantManager = require('./tenantManager');
 const roomManager = require('./roomManager');
 
+// --- Redis Initialization ---
+const redis = require('redis');
+const redisClient = redis.createClient();
+redisClient.on('error', (err) => console.error('Redis Client Error', err));
+(async () => {
+    try {
+        await redisClient.connect();
+        console.log("🚀 Redis Server Connected Successfully");
+    } catch (err) {
+        console.error("❌ Redis Connection Error:", err);
+    }
+})();
+
 // 1. Initialize Firebase & Tenants
 tenantManager.initialize();
 
@@ -247,13 +260,14 @@ const io = new Server(httpServer, {
 // Global Socket Map
 const userSocketMap = new Map(); // userId -> { socketId, appId }
 
-// Chat Room In-Memory State (Replaced Redis for standalone PM2 server)
-const crBlocklists = new Map(); // roomId -> Set<userId>
-const crHistories = new Map();  // roomId -> Array<MessagePayload>
-const crStates = new Map();     // roomId -> { seats: {} }
-
 async function broadcastSeatState(roomId) {
-    const state = crStates.get(roomId) || { seats: {} };
+    let state = { seats: {} };
+    try {
+        const saved = await redisClient.get(`cr_state:${roomId}`);
+        if (saved) state = JSON.parse(saved);
+    } catch (e) {
+        console.error(`[Redis] Failed to get state for room ${roomId}:`, e.message);
+    }
     io.to(`cr_room_${roomId}`).emit("cr_state_sync", state);
 }
 
@@ -271,9 +285,12 @@ io.on('connection', (socket) => {
             const { roomId, userId: uid, name, image, isHost } = data;
             if (!roomId || !uid) return;
 
-            // Block Check
-            const blockedSet = crBlocklists.get(roomId);
-            if (blockedSet && blockedSet.has(uid)) {
+            // Mark host status on socket for sync validation
+            if (isHost) socket.isRoomHost = true;
+
+            // Block Check using Redis Set
+            const isBlocked = await redisClient.sIsMember(`cr_blocklist:${roomId}`, uid);
+            if (isBlocked) {
                 socket.emit("cr_blocked", { message: "Booked: This Bestie Room" });
                 socket.leave(`cr_room_${roomId}`);
                 return;
@@ -281,16 +298,18 @@ io.on('connection', (socket) => {
 
             socket.join(`cr_room_${roomId}`);
             
-            // Sync History
-            const history = crHistories.get(roomId) || [];
-            if (history.length > 0) {
-                 socket.emit("cr_chat_history_res", { messages: history });
+            // Sync History from Redis List
+            const history = await redisClient.lRange(`cr_history:${roomId}`, 0, -1);
+            if (history && history.length > 0) {
+                 socket.emit("cr_chat_history_res", { messages: history.map(m => JSON.parse(m)) });
             }
 
             // Sync State & Counts
             await broadcastSeatState(roomId);
             await emitOnlineCount(roomId);
-        } catch (err) {}
+        } catch (err) {
+            console.error("[cr_join] Error:", err.message);
+        }
     });
 
     socket.on("cr_chat", async (data) => {
@@ -300,9 +319,10 @@ io.on('connection', (socket) => {
         
         io.to(`cr_room_${roomId}`).emit("cr_chat_received", payload);
         
-        if (!crHistories.has(roomId)) crHistories.set(roomId, []);
-        crHistories.get(roomId).push(payload);
-        if (crHistories.get(roomId).length > 100) crHistories.get(roomId).shift(); // KEEP RECENT 100
+        // Push to Redis List and keep only last 100
+        const listKey = `cr_history:${roomId}`;
+        await redisClient.rPush(listKey, JSON.stringify(payload));
+        await redisClient.lTrim(listKey, -100, -1);
     });
 
     socket.on("cr_seat_request", (data) => {
@@ -313,33 +333,42 @@ io.on('connection', (socket) => {
     socket.on("cr_seat_action", async (data) => {
         try {
             const { roomId, action, userId: targetId, name, image, seatId } = data;
-            if (!crStates.has(roomId)) crStates.set(roomId, { seats: {} });
-            let obj = crStates.get(roomId);
+            
+            let state = { seats: {} };
+            const saved = await redisClient.get(`cr_state:${roomId}`);
+            if (saved) state = JSON.parse(saved);
 
             if (action === "promote") {
-                Object.keys(obj.seats).forEach(k => { if (obj.seats[k].userId === targetId) delete obj.seats[k]; });
-                obj.seats[seatId] = { userId: targetId, name, image };
+                Object.keys(state.seats).forEach(k => { if (state.seats[k].userId === targetId) delete state.seats[k]; });
+                state.seats[seatId] = { userId: targetId, name, image };
             } else if (action === "remove") {
-                delete obj.seats[seatId];
+                delete state.seats[seatId];
             }
 
+            await redisClient.set(`cr_state:${roomId}`, JSON.stringify(state));
             await broadcastSeatState(roomId);
+
             const ts = userSocketMap.get(targetId);
             if (ts) io.to(ts.socketId).emit("cr_seat_status", { action, seatId });
-        } catch (err) {}
+        } catch (err) {
+            console.error("[cr_seat_action] Error:", err.message);
+        }
     });
 
     socket.on("cr_invite_accept", async (data) => {
         try {
             const { roomId, userId: acceptId, name, image, hostId } = data;
-            if (!crStates.has(roomId)) crStates.set(roomId, { seats: {} });
-            let obj = crStates.get(roomId);
+            
+            let state = { seats: {} };
+            const saved = await redisClient.get(`cr_state:${roomId}`);
+            if (saved) state = JSON.parse(saved);
 
             let sId = -1;
-            for (let i = 1; i <= 7; i++) { if (!obj.seats[i]) { sId = i; break; } }
+            for (let i = 1; i <= 7; i++) { if (!state.seats[i]) { sId = i; break; } }
 
             if (sId !== -1) {
-                obj.seats[sId] = { userId: acceptId, name, image };
+                state.seats[sId] = { userId: acceptId, name, image };
+                await redisClient.set(`cr_state:${roomId}`, JSON.stringify(state));
                 await broadcastSeatState(roomId);
                 
                 const hs = userSocketMap.get(hostId);
@@ -352,18 +381,30 @@ io.on('connection', (socket) => {
         try {
             const { roomId, state } = data;
             if (!roomId || !state) return;
-            crStates.set(roomId, state);
+
+            // Security: Only Host or designated Room Host can sync full state
+            if (!socket.isRoomHost) {
+                console.warn(`[SyncBlocked] Non-host user ${socket.userId} tried to sync state in ${roomId}`);
+                return;
+            }
+
+            await redisClient.set(`cr_state:${roomId}`, JSON.stringify(state));
             await broadcastSeatState(roomId);
         } catch (err) {}
     });
 
     socket.on("cr_leave", async (data) => {
         const { roomId, userId: leaveId } = data;
-        let obj = crStates.get(roomId);
-        if (obj) {
+        
+        let saved = await redisClient.get(`cr_state:${roomId}`);
+        if (saved) {
+            let state = JSON.parse(saved);
             let ch = false;
-            Object.keys(obj.seats).forEach(k => { if (obj.seats[k].userId === leaveId) { delete obj.seats[k]; ch = true; } });
-            if (ch) await broadcastSeatState(roomId);
+            Object.keys(state.seats).forEach(k => { if (state.seats[k].userId === leaveId) { delete state.seats[k]; ch = true; } });
+            if (ch) {
+                await redisClient.set(`cr_state:${roomId}`, JSON.stringify(state));
+                await broadcastSeatState(roomId);
+            }
         }
         socket.leave(`cr_room_${roomId}`);
         io.to(`cr_room_${roomId}`).emit("user_left_room", { userId: leaveId });
@@ -372,20 +413,29 @@ io.on('connection', (socket) => {
 
     socket.on("cr_block_user", async (data) => {
         const { roomId, targetId } = data;
-        if (!crBlocklists.has(roomId)) crBlocklists.set(roomId, new Set());
-        crBlocklists.get(roomId).add(targetId);
+        await redisClient.sAdd(`cr_blocklist:${roomId}`, targetId);
     });
 
     socket.on("cr_unblock_user", async (data) => {
         const { roomId, targetId } = data;
-        if (crBlocklists.has(roomId)) crBlocklists.get(roomId).delete(targetId);
+        await redisClient.sRem(`cr_blocklist:${roomId}`, targetId);
     });
 
     socket.on("cr_check_block", async (data) => {
         const { roomId, userId } = data;
-        const s = crBlocklists.get(roomId);
-        const isBlocked = s ? s.has(userId) : false;
+        const isBlocked = await redisClient.sIsMember(`cr_blocklist:${roomId}`, userId);
         socket.emit("cr_block_check_res", { isBlocked });
+    });
+
+    socket.on("cr_gift", async (data) => {
+        const { roomId } = data;
+        io.to(`cr_room_${roomId}`).emit("cr_gift_received", data);
+    });
+
+    socket.on("cr_clear_history", async (data) => {
+        const { roomId } = data;
+        await redisClient.del(`cr_history:${roomId}`);
+        io.to(`cr_room_${roomId}`).emit("cr_history_cleared", { roomId });
     });
 });
 

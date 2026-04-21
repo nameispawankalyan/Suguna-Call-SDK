@@ -32,11 +32,20 @@ class SugunaChatRoomSeatAdapter : RecyclerView.Adapter<SugunaChatRoomSeatAdapter
             override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean {
                 val old = seats[oldPos]
                 val new = updatedNewSeats[newPos]
-                // Full visual compare including speaking and reactions
                 return old.id == new.id && old.name == new.name && old.image == new.image && 
                        old.isMuted == new.isMuted && old.isHost == new.isHost &&
                        old.isSpeaking == new.isSpeaking && 
                        old.reactionUrl == new.reactionUrl
+            }
+
+            override fun getChangePayload(oldPos: Int, newPos: Int): Any? {
+                val old = seats[oldPos]
+                val new = updatedNewSeats[newPos]
+                val payloads = mutableSetOf<String>()
+                if (old.isMuted != new.isMuted) payloads.add("MUTE_UPDATE")
+                if (old.isSpeaking != new.isSpeaking) payloads.add("SPEAKING_UPDATE")
+                if (old.reactionUrl != new.reactionUrl) payloads.add("REACTION_UPDATE")
+                return if (payloads.isEmpty()) null else payloads
             }
         }
         val diffResult = androidx.recyclerview.widget.DiffUtil.calculateDiff(diffCallback)
@@ -115,17 +124,30 @@ class SugunaChatRoomSeatAdapter : RecyclerView.Adapter<SugunaChatRoomSeatAdapter
             super.onBindViewHolder(holder, position, payloads)
         } else {
             val seat = seats[position]
-            // Only update specific parts requested by payload
-            if (payloads.contains("SPEAKING_UPDATE")) {
+            // Payloads might be wrapped in a nested list if they came from DiffUtil
+            val flatPayloads = mutableSetOf<String>()
+            payloads.forEach { 
+                if (it is Set<*>) it.forEach { sub -> flatPayloads.add(sub.toString()) }
+                else flatPayloads.add(it.toString())
+            }
+
+            if (flatPayloads.contains("MUTE_UPDATE")) {
+                holder.updateMuteScale(seat.isMuted)
+            }
+            if (flatPayloads.contains("SPEAKING_UPDATE")) {
                 holder.updateSpeaking(seat.isSpeaking)
             }
-            if (payloads.contains("REACTION_UPDATE") || payloads.contains("REACTION_CLEAR")) {
+            if (flatPayloads.contains("REACTION_UPDATE") || flatPayloads.contains("REACTION_CLEAR")) {
                 holder.bindReaction(seat.reactionUrl, seat.reactionType)
             }
         }
     }
 
     override fun getItemCount(): Int = seats.size
+
+    fun getSeatAt(position: Int): SeatParticipant? {
+        return if (position in 0 until seats.size) seats[position] else null
+    }
 
     inner class SeatViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val ivProfile: ImageView = itemView.findViewById(R.id.ivParticipantProfile)
@@ -193,6 +215,10 @@ class SugunaChatRoomSeatAdapter : RecyclerView.Adapter<SugunaChatRoomSeatAdapter
             }
             
             bindReaction(seat.reactionUrl, seat.reactionType)
+        }
+
+        fun updateMuteScale(isMuted: Boolean) {
+            ivMuted.visibility = if (isMuted) View.VISIBLE else View.INVISIBLE
         }
 
         fun updateSpeaking(isSpeaking: Boolean) {

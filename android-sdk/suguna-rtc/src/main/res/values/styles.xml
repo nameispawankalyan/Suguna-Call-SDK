@@ -11,6 +11,7 @@
         <item name="android:windowActionBar">false</item>
         <item name="android:windowFullscreen">false</item>
         <item name="android:statusBarColor">#121212</item>
+        <item name="bottomSheetDialogTheme">@style/BottomSheetDialogTheme</item>
     </style>
     <style name="RoundedSoft" parent="">
         <item name="cornerFamily">rounded</item>

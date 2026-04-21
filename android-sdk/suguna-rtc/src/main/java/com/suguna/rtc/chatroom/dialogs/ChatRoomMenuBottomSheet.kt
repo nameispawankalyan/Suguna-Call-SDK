@@ -10,6 +10,7 @@ import com.suguna.rtc.R
 class ChatRoomMenuBottomSheet(
     private val context: Context,
     private val isHost: Boolean,
+    private val onEarningsClick: () -> Unit,
     private val onMessengerClick: () -> Unit,
     private val onClearChatClick: () -> Unit
 ) {
@@ -26,6 +27,13 @@ class ChatRoomMenuBottomSheet(
 
         val llMessenger = view.findViewById<LinearLayout>(R.id.llMessenger)
         val llClearChat = view.findViewById<LinearLayout>(R.id.llClearChat)
+        val llEarnings = view.findViewById<LinearLayout>(R.id.llEarnings)
+
+        llEarnings.visibility = if (isHost) View.VISIBLE else View.GONE
+        llEarnings.setOnClickListener {
+            onEarningsClick()
+            dialog.dismiss()
+        }
 
         llMessenger.setOnClickListener {
             onMessengerClick()

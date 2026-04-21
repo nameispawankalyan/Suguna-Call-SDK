@@ -211,6 +211,13 @@ object SocketManager {
         socket?.emit("cr_chat", data)
     }
 
+    fun crGift(roomId: String, senderId: String, receiverId: String, giftUrl: String) {
+        val data = JSONObject().apply {
+            put("roomId", roomId); put("senderId", senderId); put("receiverId", receiverId); put("giftUrl", giftUrl)
+        }
+        socket?.emit("cr_gift", data)
+    }
+
     fun crClearHistory(roomId: String) {
         val data = JSONObject().apply {
             put("roomId", roomId)

@@ -30,6 +30,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
     private lateinit var btnMute: ImageButton
     private lateinit var btnSpeaker: ImageButton
     private lateinit var btnEndCall: ImageButton
+    private lateinit var btnGift: ImageButton
     private lateinit var btnAddCoins: android.widget.LinearLayout
     private lateinit var ivLocalProfile: ImageView
     private lateinit var ivRemoteProfile: ImageView
@@ -102,6 +103,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         val userId = intent.getStringExtra("USER_ID") ?: ""
         val rName = intent.getStringExtra("REMOTE_NAME") ?: "FriendZone User"
         val rImage = intent.getStringExtra("REMOTE_IMAGE") ?: ""
+        remoteUserId = intent.getStringExtra("REMOTE_USER_ID") ?: ""
         coins = intent.getLongExtra("COINS", 0L)
         
         localUserId = userId 
@@ -286,11 +288,17 @@ class SugunaAudioCallActivity : AppCompatActivity() {
         btnSpeaker.setBackgroundResource(R.drawable.bg_control_active_white)
         btnSpeaker.setColorFilter(android.graphics.Color.BLACK) // Active = Black Icon
         
+        btnGift = findViewById(R.id.btnGift)
         btnAddCoins = findViewById(R.id.btnAddCoins)
         if (isSender) {
             btnAddCoins.visibility = View.VISIBLE
+            btnGift.visibility = View.VISIBLE
+            if (!isFinishing && !isDestroyed) {
+                com.bumptech.glide.Glide.with(this).asGif().load(R.drawable.gift_icon).into(btnGift)
+            }
         } else {
             btnAddCoins.visibility = View.GONE
+            btnGift.visibility = View.GONE
         }
     }
 
@@ -342,6 +350,16 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             animateButtonClick(btnAddCoins)
             // Notify Client via Broadcast (Client handles UI/Logic)
             val intent = Intent("com.suguna.rtc.ACTION_ADD_COINS")
+            sendBroadcast(intent)
+        }
+        
+        btnGift.setOnClickListener {
+            animateButtonClick(btnGift)
+            val intent = Intent("com.suguna.rtc.ACTION_SHOW_GIFTS").apply {
+                putExtra("RECEIVER_ID", remoteUserId)
+                putExtra("IS_ROOM", false)
+                putExtra("CONTEXT", "Call")
+            }
             sendBroadcast(intent)
         }
     }
@@ -560,6 +578,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
             userImage: String,
             remoteName: String = "",
             remoteImage: String = "",
+            remoteUserId: String = "",
             coins: Long,
             isSender: Boolean,
             webhookUrl: String,
@@ -574,6 +593,7 @@ class SugunaAudioCallActivity : AppCompatActivity() {
                 putExtra("USER_IMAGE", userImage)
                 putExtra("REMOTE_NAME", remoteName)
                 putExtra("REMOTE_IMAGE", remoteImage)
+                putExtra("REMOTE_USER_ID", remoteUserId)
                 putExtra("COINS", coins)
                 putExtra("IS_SENDER", isSender)
                 putExtra("WEBHOOK_URL", webhookUrl)

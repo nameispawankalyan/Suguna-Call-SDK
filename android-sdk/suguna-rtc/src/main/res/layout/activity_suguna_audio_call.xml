@@ -77,7 +77,9 @@
 
         <ImageButton android:id="@+id/btnMute" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_glass" android:src="@drawable/ic_mic_on" app:tint="#FFFFFF" android:padding="16dp" android:layout_marginEnd="24dp"/>
 
-        <ImageButton android:id="@+id/btnSpeaker" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_glass" android:src="@drawable/ic_speaker_on" app:tint="#FFFFFF" android:padding="16dp"/>
+        <ImageButton android:id="@+id/btnSpeaker" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_glass" android:src="@drawable/ic_speaker_on" app:tint="#FFFFFF" android:padding="16dp" android:layout_marginEnd="24dp"/>
+
+        <ImageButton android:id="@+id/btnGift" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_control_glass" android:src="@drawable/gift_icon" android:padding="12dp" android:scaleType="centerInside" />
 
     </LinearLayout>
 
