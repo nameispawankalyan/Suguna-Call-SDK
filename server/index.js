@@ -287,16 +287,20 @@ io.on('connection', (socket) => {
 
             // Mark host status on socket for sync validation
             if (isHost) socket.isRoomHost = true;
-
+            
             // Block Check using Redis Set
             const isBlocked = await redisClient.sIsMember(`cr_blocklist:${roomId}`, uid);
             if (isBlocked) {
                 socket.emit("cr_blocked", { message: "Booked: This Bestie Room" });
-                socket.leave(`cr_room_${roomId}`);
                 return;
             }
 
             socket.join(`cr_room_${roomId}`);
+            
+            // Map userId to socket for requests/invites
+            userSocketMap.set(uid, { socketId: socket.id, appId: "friendzone_001" });
+            socket.userId = uid;
+            socket.roomId = roomId;
             
             // Sync History from Redis List
             const history = await redisClient.lRange(`cr_history:${roomId}`, 0, -1);
@@ -326,8 +330,13 @@ io.on('connection', (socket) => {
     });
 
     socket.on("cr_seat_request", (data) => {
-        const hs = userSocketMap.get(data.hostId);
-        if (hs) io.to(hs.socketId).emit("cr_handle_request", data);
+        const { hostId, userId, name, image } = data;
+        const hs = userSocketMap.get(hostId);
+        if (hs) {
+            io.to(hs.socketId).emit("cr_handle_request", { userId, name, image });
+        } else {
+            console.warn(`[SeatRequest] Host ${hostId} not found in socket map.`);
+        }
     });
 
     socket.on("cr_seat_action", async (data) => {
@@ -372,9 +381,11 @@ io.on('connection', (socket) => {
                 await broadcastSeatState(roomId);
                 
                 const hs = userSocketMap.get(hostId);
-                if (hs) io.to(hs.socketId).emit("seat_invite_accept", { sender_id: acceptId, name, image });
+                if (hs) io.to(hs.socketId).emit("seat_invite_accept", { sender_id: acceptId, name, image, roomId });
             }
-        } catch (err) {}
+        } catch (err) {
+            console.error("[cr_invite_accept] Error:", err.message);
+        }
     });
     
     socket.on("cr_sync_state", async (data) => {
@@ -432,10 +443,32 @@ io.on('connection', (socket) => {
         io.to(`cr_room_${roomId}`).emit("cr_gift_received", data);
     });
 
+    socket.on("cr_reaction", (data) => {
+        const { roomId } = data;
+        if (roomId) io.to(`cr_room_${roomId}`).emit("cr_reaction", data);
+    });
+
     socket.on("cr_clear_history", async (data) => {
         const { roomId } = data;
         await redisClient.del(`cr_history:${roomId}`);
         io.to(`cr_room_${roomId}`).emit("cr_history_cleared", { roomId });
+    });
+
+    socket.on("cr_get_blocklist", async (data) => {
+        const { roomId } = data;
+        try {
+            const list = await redisClient.sMembers(`cr_blocklist:${roomId}`);
+            const detailedList = [];
+            
+            // Try to fetch some basic info for these IDs if possible, 
+            // or just return the IDs. The client expects {id, name, image}.
+            for (const bid of list) {
+                detailedList.push({ id: bid, name: "Blocked User", image: "" });
+            }
+            socket.emit("cr_blocklist_res", { roomId, list: detailedList });
+        } catch (e) {
+            socket.emit("cr_blocklist_res", { roomId, list: [] });
+        }
     });
 });
 

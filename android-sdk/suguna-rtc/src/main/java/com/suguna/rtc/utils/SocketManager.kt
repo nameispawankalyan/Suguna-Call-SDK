@@ -211,9 +211,18 @@ object SocketManager {
         socket?.emit("cr_chat", data)
     }
 
-    fun crGift(roomId: String, senderId: String, receiverId: String, giftUrl: String) {
+    fun crGift(roomId: String, senderId: String, receiverId: String, giftUrl: String, receiverIds: List<String> = emptyList()) {
         val data = JSONObject().apply {
-            put("roomId", roomId); put("senderId", senderId); put("receiverId", receiverId); put("giftUrl", giftUrl)
+            put("roomId", roomId)
+            put("senderId", senderId)
+            put("giftUrl", giftUrl)
+            if (receiverIds.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                receiverIds.forEach { arr.put(it) }
+                put("receiverIds", arr)
+            } else {
+                put("receiverId", receiverId)
+            }
         }
         socket?.emit("cr_gift", data)
     }

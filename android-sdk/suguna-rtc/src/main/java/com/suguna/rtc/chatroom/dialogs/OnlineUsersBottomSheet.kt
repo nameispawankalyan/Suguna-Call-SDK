@@ -186,20 +186,26 @@ class OnlineUsersBottomSheet(
                  com.suguna.rtc.utils.SocketManager.getSocket()?.off("cr_blocklist_res") // Clear old
                  com.suguna.rtc.utils.SocketManager.getSocket()?.on("cr_blocklist_res") { args ->
                      (context as? android.app.Activity)?.runOnUiThread {
-                         blockList.clear()
                          val arg0 = args?.getOrNull(0)
                          var list: org.json.JSONArray? = null
                          
                          if (arg0 is org.json.JSONObject) {
-                             list = arg0.optJSONArray("list") ?: arg0.optJSONArray("blocklist")
+                             // Handle multiple possible keys for the blocklist array
+                             list = arg0.optJSONArray("list") ?: arg0.optJSONArray("blocklist") ?: arg0.optJSONArray("data")
                          } else if (arg0 is org.json.JSONArray) {
                              list = arg0
                          }
                          
-                         if (list != null && list.length() > 0) {
+                         blockList.clear()
+                         if (list != null) {
                              for (i in 0 until list.length()) {
                                  val obj = list.getJSONObject(i)
-                                 blockList.add(SeatParticipant(obj.getString("id"), obj.getString("name"), obj.optString("image"), isHost = false))
+                                 val bId = obj.optString("id") ?: obj.optString("userId") ?: ""
+                                 val bName = obj.optString("name") ?: "User"
+                                 val bImage = obj.optString("image") ?: ""
+                                 if (bId.isNotEmpty()) {
+                                     blockList.add(SeatParticipant(bId, bName, bImage, isHost = false))
+                                 }
                              }
                          }
                          btnBlockTab.isEnabled = true

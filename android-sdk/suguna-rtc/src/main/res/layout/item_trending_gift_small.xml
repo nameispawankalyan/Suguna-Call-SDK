@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="8dp"
+    android:layout_marginHorizontal="2dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:background="?attr/selectableItemBackgroundBorderless">
+
+    <com.airbnb.lottie.LottieAnimationView
+        android:id="@+id/ivGiftImage"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        app:lottie_autoPlay="true"
+        app:lottie_loop="true"
+        android:scaleType="centerInside"/>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="2dp"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="1dp"
+        android:background="@drawable/bg_trending_price_pill">
+
+        <ImageView
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:src="@drawable/ic_coin_gold"
+            android:layout_marginEnd="2dp"/>
+
+        <TextView
+            android:id="@+id/tvGiftPrice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0"
+            android:textColor="#FFD700"
+            android:textSize="9sp"
+            android:textStyle="bold"/>
+    </LinearLayout>
+</LinearLayout>

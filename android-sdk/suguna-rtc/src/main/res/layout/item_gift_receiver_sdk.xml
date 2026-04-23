@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="6dp">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal">
+
+        <RelativeLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivReceiverImage"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:scaleType="centerCrop"
+                android:src="@drawable/chair_icon"
+                app:shapeAppearanceOverlay="@style/CircleImage"
+                app:strokeWidth="1.5dp"
+                app:strokeColor="#40FFFFFF"
+                android:padding="1dp"/>
+
+            <!-- Selection Overlay (Verified Badge Style) -->
+            <ImageView
+                android:id="@+id/ivSelectionOverlay"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_verified_badge"
+                android:layout_alignRight="@id/ivReceiverImage"
+                android:layout_alignBottom="@id/ivReceiverImage"
+                android:layout_marginRight="-2dp"
+                android:layout_marginBottom="-2dp"
+                android:visibility="gone"
+                app:tint="#FFD700"/>
+
+            <!-- Host Tag -->
+            <TextView
+                android:id="@+id/tvHostTag"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Host"
+                android:textColor="#FFFFFF"
+                android:textSize="7sp"
+                android:paddingHorizontal="4dp"
+                android:paddingVertical="1dp"
+                android:background="@drawable/bg_host_tag_small"
+                android:layout_alignBottom="@id/ivReceiverImage"
+                android:layout_centerHorizontal="true"
+                android:layout_marginBottom="-4dp"
+                android:visibility="gone"/>
+
+        </RelativeLayout>
+
+        <TextView
+            android:id="@+id/tvReceiverName"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="User"
+            android:textColor="#E0FFFFFF"
+            android:textSize="10sp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"/>
+
+    </LinearLayout>
+
+</FrameLayout>

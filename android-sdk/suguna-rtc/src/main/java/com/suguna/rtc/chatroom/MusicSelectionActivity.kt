@@ -172,6 +172,7 @@ class MusicSelectionActivity : AppCompatActivity() {
                     playIntent.putExtra("SONG_ART", it.albumArt.toString())
                     playIntent.putExtra("SONG_DURATION", it.duration)
                     playIntent.putExtra("ACTION", "TOGGLE")
+                    playIntent.setPackage(packageName)
                     sendBroadcast(playIntent)
                     finish()
                 } else {

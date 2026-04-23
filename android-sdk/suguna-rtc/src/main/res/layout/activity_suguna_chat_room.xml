@@ -187,6 +187,27 @@
             android:layout_marginBottom="8dp"
             tools:listitem="@layout/item_chat_room_message"/>
 
+        <!-- Quick Trending Gifts Bar -->
+        <HorizontalScrollView
+            android:id="@+id/trendingGiftsBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginBottom="12dp"
+            android:scrollbars="none"
+            android:background="@drawable/bg_trending_bar_glass"
+            android:paddingVertical="4dp"
+            android:paddingHorizontal="8dp"
+            android:visibility="gone">
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvTrendingGifts"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                tools:listitem="@layout/item_trending_gift_small"/>
+        </HorizontalScrollView>
+
         <!-- Music Player Overlay -->
         <include
             android:id="@+id/musicOverlay"
@@ -276,7 +297,7 @@
         android:padding="16dp"
         app:shapeAppearanceOverlay="@style/CircleImage"
         android:layout_marginEnd="16dp"
-        android:layout_marginBottom="80dp"
+        android:layout_marginBottom="180dp"
         android:visibility="gone"
         android:elevation="6dp"
         app:layout_constraintBottom_toBottomOf="parent"

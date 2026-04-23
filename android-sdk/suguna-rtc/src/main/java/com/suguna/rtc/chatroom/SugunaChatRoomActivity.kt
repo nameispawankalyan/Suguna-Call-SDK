@@ -7,10 +7,12 @@ import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import android.util.Log
+import com.google.firebase.functions.FirebaseFunctions
 import com.suguna.rtc.R
 import com.suguna.rtc.SugunaClient
 import android.widget.ImageView
@@ -19,19 +21,27 @@ import com.suguna.rtc.chatroom.dialogs.RequestsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatControlsBottomSheet
 import com.suguna.rtc.chatroom.dialogs.SeatInviteDialog
 import com.suguna.rtc.chatroom.dialogs.ReactionsBottomSheet
+import com.suguna.rtc.chatroom.dialogs.QuickGiftBottomSheet
 import io.livekit.android.room.track.VideoTrack
 import io.socket.client.Socket
 import org.json.JSONObject
+import org.json.JSONArray
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.ArrayList
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.widget.SeekBar
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
+import com.suguna.rtc.utils.Encryption
 
 class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
@@ -52,6 +62,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     private var isHostLocal = false
     private var roomOwnerId: String = ""
     private var roomOwnerName: String = ""
+    private var roomOwnerImage: String = ""
     private var listParticipants = mutableListOf<SeatParticipant>()
     
     private val requestList = mutableListOf<SeatParticipant>()
@@ -79,6 +90,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                 val artUri = intent.getStringExtra("SONG_ART")
                 val duration = intent.getLongExtra("SONG_DURATION", 0L)
                 if (isHostLocal) {
+                    Toast.makeText(this@SugunaChatRoomActivity, "Starting Playback: $name", Toast.LENGTH_SHORT).show()
                     startMusicBroadcasting(name, uriString, artUri, duration)
                 }
             }
@@ -173,7 +185,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         roomLanguage = intent.getStringExtra("ROOM_LANGUAGE") ?: "English"
         roomOwnerId = intent.getStringExtra("ROOM_OWNER_ID") ?: ""
         roomOwnerName = intent.getStringExtra("ROOM_OWNER_NAME") ?: "Host"
-        val roomOwnerImage = intent.getStringExtra("ROOM_OWNER_IMAGE") ?: if (isHostLocal) localImage else ""
+        roomOwnerImage = intent.getStringExtra("ROOM_OWNER_IMAGE") ?: if (isHostLocal) localImage else ""
         roomLevel = intent.getIntExtra("roomLevel", 8)
 
         checkNotificationPermission()
@@ -195,14 +207,17 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         setupMessagesRecyclerView()
         setupMessageSender()
         setupControls()
+        setupTrendingGiftsBar()
         
         val cFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_CLOSE_CHATROOM_SEAT")
+        val pFilter = android.content.IntentFilter(android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+        
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(closeChatRoomReceiver, cFilter, 2) // 2 = RECEIVER_NOT_EXPORTED
-            registerReceiver(phoneStateReceiver, android.content.IntentFilter(android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED), 2)
+            registerReceiver(closeChatRoomReceiver, cFilter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(phoneStateReceiver, pFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(closeChatRoomReceiver, cFilter)
-            registerReceiver(phoneStateReceiver, android.content.IntentFilter(android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED))
+            registerReceiver(phoneStateReceiver, pFilter)
         }
 
         if (token.isEmpty()) {
@@ -235,9 +250,9 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
         val mFilter = android.content.IntentFilter("com.suguna.rtc.ACTION_PLAY_MUSIC")
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            this.registerReceiver(musicReceiver, mFilter, 2)
+            ContextCompat.registerReceiver(this, musicReceiver, mFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         } else {
-            this.registerReceiver(musicReceiver, mFilter)
+            registerReceiver(musicReceiver, mFilter)
         }
 
         animationOverlay = findViewById(R.id.animationOverlay)
@@ -250,14 +265,27 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                 sock.on("cr_gift_received") { args: Array<Any>? ->
                     val data = args?.getOrNull(0) as? org.json.JSONObject
                     if (data != null) {
-                        val rId = data.optString("receiverId")
                         val sId = data.optString("senderId")
                         val gUrl = data.optString("giftUrl")
+                        val rIdsArr = data.optJSONArray("receiverIds")
+                        val singleRId = data.optString("receiverId")
                         
                         runOnUiThread {
-                             // Trigger Fast Animation
-                             giftQueue.add(GiftTask(sId, rId, gUrl))
-                             processNextGift()
+                             // Hint for receiver/room (Vibration)
+                             val vibrator = getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+                             vibrator.vibrate(100)
+
+                             val rootView = findViewById<android.view.ViewGroup>(android.R.id.content)
+                             if (rootView != null) {
+                                 if (rIdsArr != null) {
+                                     for (i in 0 until rIdsArr.length()) {
+                                         val rId = rIdsArr.getString(i)
+                                         startActualAnimation(gUrl, rId, rootView)
+                                     }
+                                 } else if (singleRId.isNotEmpty()) {
+                                     startActualAnimation(gUrl, singleRId, rootView)
+                                 }
+                             }
                         }
                     }
                 }
@@ -340,6 +368,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         
         try { unregisterReceiver(closeChatRoomReceiver) } catch (e: Exception) {}
         try { unregisterReceiver(phoneStateReceiver) } catch (e: Exception) {}
+        try { unregisterReceiver(musicReceiver) } catch (e: Exception) {}
         
         try {
              val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
@@ -415,8 +444,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     
                                     val wasSeatedLocalBefore = seatedUsers.values.any { it.id == localUserId } || isHostLocal
                                     
-                                    seatedUsers.clear()
-                                    seatedUsers.putAll(newSeatedUsers)
+                                    // ANTI-OVERWRITE: Only replace if we have valid data
+                                    if (newSeatedUsers.isNotEmpty() || (isHostLocal && seatedUsers.isEmpty())) {
+                                        seatedUsers.clear()
+                                        seatedUsers.putAll(newSeatedUsers)
+                                    }
                                     
                                     val isSeatedLocalNow = seatedUsers.values.any { it.id == localUserId } || isHostLocal
                                     
@@ -468,10 +500,16 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                         runOnUiThread {
                             val reqJson = args?.getOrNull(0) as? org.json.JSONObject
                             if (reqJson != null) {
-                                val reqU = SeatParticipant(reqJson.getString("userId"), reqJson.getString("name"), reqJson.optString("image"))
-                                if (!requestList.any { it.id == reqU.id }) {
-                                    requestList.add(reqU)
-                                    updateRequestCount()
+                                val rUId = reqJson.optString("userId") ?: reqJson.optString("sender_id") ?: ""
+                                val rUName = reqJson.optString("name") ?: "User"
+                                val rUImage = reqJson.optString("image") ?: ""
+                                
+                                if (rUId.isNotEmpty()) {
+                                    val reqU = SeatParticipant(rUId, rUName, rUImage)
+                                    if (!requestList.any { it.id == reqU.id }) {
+                                        requestList.add(reqU)
+                                        updateRequestCount()
+                                    }
                                 }
                             }
                         }
@@ -614,6 +652,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                          runOnUiThread {
                              val data = args?.getOrNull(0) as? org.json.JSONObject
                              Toast.makeText(this@SugunaChatRoomActivity, data?.optString("message", "You are blocked"), Toast.LENGTH_LONG).show()
+                             
+                             // STOP AUDIO IMMEDIATELY
+                             if (::sugunaClient.isInitialized) {
+                                 sugunaClient.leaveRoom()
+                             }
                              finish()
                          }
                     }
@@ -733,7 +776,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     val msg = ChatMessage(
                                         senderId = json.getString("sender_id"),
                                         name = json.getString("name"),
-                                        image = json.optString("image"),
+                                        image = json.getString("image"),
                                         message = json.getString("msg"),
                                         timestamp = getFormattedTime(rawTime)
                                     )
@@ -772,6 +815,21 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                       val url = json.getString("url")
                                       val type = json.optString("reactionType", "Lottie")
                                       seatAdapter.playReaction(uId, url, type)
+                                }
+                                "cr_gift_anim" -> {
+                                    val giftUrl = json.getString("gift_url")
+                                    val giftName = json.optString("gift_name", "Gift")
+                                    val sName = json.optString("sender_name", "Someone")
+                                    val count = json.optInt("count", 1)
+                                    val rIds = json.getJSONArray("receiver_ids")
+                                    
+                                    // Hint for everyone in the room (Vibration only as requested)
+                                    vibrateDevice()
+                                    
+                                    for (i in 0 until rIds.length()) {
+                                        val rid = rIds.getString(i)
+                                        startActualAnimation(giftUrl, rid, findViewById(R.id.animationOverlay))
+                                    }
                                 }
                                 "chat_history_request" -> {
                                      if (isHostLocal) {
@@ -846,7 +904,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     if (isHostLocal) {
                                         val senderId = json.getString("sender_id")
                                         val name = json.getString("name")
-                                        val image = json.optString("image")
+                                        val image = json.getString("image")
                                         val p = SeatParticipant(senderId, name, image)
                                         handleAcceptUser(p)
                                     }
@@ -896,7 +954,11 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                                     val targetId = json.optString("target_id")
                                     if (localUserId == targetId) {
                                         Toast.makeText(this@SugunaChatRoomActivity, "You have been removed from the room by the Host.", Toast.LENGTH_LONG).show()
-                                        finish()
+                                         // STOP AUDIO IMMEDIATELY
+                                         if (::sugunaClient.isInitialized) {
+                                             sugunaClient.leaveRoom()
+                                         }
+                                         finish()
                                     }
                                 }
                                  "seat_confirm" -> {
@@ -1135,6 +1197,161 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         rvMessages.adapter = messageAdapter
     }
 
+    private fun setupTrendingGiftsBar() {
+        fetchTrendingGifts()
+    }
+
+    private fun fetchTrendingGifts() {
+        val rvTrending = findViewById<RecyclerView>(R.id.rvTrendingGifts)
+        val bar = findViewById<android.view.View>(R.id.trendingGiftsBar)
+
+        FirebaseDatabase.getInstance().reference.child("VirtualGifts")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val allGifts = mutableListOf<GiftModel>()
+                    for (giftSnap in snapshot.children) {
+                        val rawUrl = giftSnap.child("Url").value?.toString() ?: ""
+                        val rawType = giftSnap.child("Type").value?.toString() ?: ""
+                        val id = Encryption.decrypt(giftSnap.child("ID").value?.toString() ?: "") ?: giftSnap.child("ID").value?.toString() ?: ""
+                        val name = Encryption.decrypt(giftSnap.child("Name").value?.toString() ?: "") ?: giftSnap.child("Name").value?.toString() ?: "Gift"
+                        val url = Encryption.decrypt(rawUrl) ?: rawUrl
+                        val type = Encryption.decrypt(rawType) ?: rawType ?: "Static"
+                        val priceStr = Encryption.decrypt(giftSnap.child("Price").value?.toString() ?: "") ?: giftSnap.child("Price").value?.toString() ?: "0"
+                        val price = priceStr.toIntOrNull() ?: 0
+                        
+                        allGifts.add(GiftModel(id, name, url, price, type))
+                    }
+                    
+                    if (allGifts.isNotEmpty()) {
+                        fetchTrendingLogic(allGifts, bar, rvTrending)
+                    }
+                }
+                override fun onCancelled(error: DatabaseError) {
+                    bar.visibility = View.GONE
+                }
+            })
+    }
+
+    private fun fetchTrendingLogic(allGifts: List<GiftModel>, bar: View, rv: RecyclerView) {
+        val dates = listOf(getFormattedDate(0), getFormattedDate(-1), getFormattedDate(-2))
+        val trendingCounts = mutableMapOf<String, Int>()
+        var loaded = 0
+        
+        for (date in dates) {
+            FirebaseDatabase.getInstance().reference.child("GlobalGiftingStats").child(date)
+                .get().addOnSuccessListener { snapshot ->
+                    for (giftSnap in snapshot.children) {
+                        val gid = giftSnap.key ?: continue
+                        val count = giftSnap.getValue(Int::class.java) ?: 0
+                        trendingCounts[gid] = (trendingCounts[gid] ?: 0) + count
+                    }
+                    loaded++
+                    if (loaded == 3) finalizeTrending(allGifts, trendingCounts, bar, rv)
+                }.addOnFailureListener {
+                    loaded++
+                    if (loaded == 3) finalizeTrending(allGifts, trendingCounts, bar, rv)
+                }
+        }
+    }
+
+    private fun finalizeTrending(allGifts: List<GiftModel>, counts: Map<String, Int>, bar: View, rv: RecyclerView) {
+        val trendingGifts = allGifts.filter { counts.containsKey(it.id) }
+            .sortedByDescending { counts[it.id] ?: 0 }
+            .take(15)
+
+        if (trendingGifts.isNotEmpty()) {
+            bar.visibility = View.VISIBLE
+            rv.adapter = TrendingGiftAdapter(trendingGifts) { gift ->
+                showQuickGiftSheet(gift)
+            }
+        } else {
+            bar.visibility = View.GONE
+        }
+    }
+
+    private fun getFormattedDate(daysOffset: Int): String {
+        val calendar = java.util.Calendar.getInstance()
+        calendar.add(java.util.Calendar.DAY_OF_YEAR, daysOffset)
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        return dateFormat.format(calendar.time)
+    }
+
+    private fun showQuickGiftSheet(gift: GiftModel) {
+        val allReceivers = seatedUsers.values.toMutableList()
+        // Ensure Host is always in the list for gifting
+        if (!allReceivers.any { it.id == roomOwnerId }) {
+            allReceivers.add(0, SeatParticipant(roomOwnerId, roomOwnerName, roomOwnerImage))
+        }
+        
+        // Anti-Self Gifting: User cannot gift themselves
+        allReceivers.removeAll { it.id == localUserId }
+
+        val sheet = QuickGiftBottomSheet(gift, allReceivers, roomOwnerId) { g, rIds, count ->
+            // 1. Local Coin Check
+            val totalPrice = g.price * count * rIds.size
+            FirebaseDatabase.getInstance().reference.child("Wallet").child("CoinBalance").child(localUserId)
+                .child("RechargeCoins").get().addOnSuccessListener { snapshot ->
+                    val balance = if (snapshot.exists()) {
+                        val enc = snapshot.getValue(String::class.java) ?: ""
+                        (com.suguna.rtc.utils.Encryption.decrypt(enc) ?: "0").toIntOrNull() ?: 0
+                    } else 0
+
+                    if (balance < totalPrice) {
+                        Toast.makeText(this@SugunaChatRoomActivity, "Not enough coins! Please recharge.", Toast.LENGTH_SHORT).show()
+                        return@addOnSuccessListener
+                    }
+
+                    // 2. Cloud Function for financials (Coins & Beans)
+                    val functions = com.google.firebase.functions.FirebaseFunctions.getInstance("asia-south1")
+                    val data = hashMapOf(
+                        "receiverIds" to rIds,
+                        "giftId" to g.id,
+                        "count" to count,
+                        "isRoom" to true,
+                        "roomId" to (this@SugunaChatRoomActivity.intent.getStringExtra("ROOM_ID") ?: ""),
+                        "giftContext" to "Room"
+                    )
+ 
+                    functions.getHttpsCallable("sendVirtualGift")
+                        .call(data)
+                        .addOnCompleteListener { task: com.google.android.gms.tasks.Task<com.google.firebase.functions.HttpsCallableResult> ->
+                            if (isFinishing || isDestroyed) return@addOnCompleteListener
+                            if (task.isSuccessful) {
+                                // SUCCESS: Now trigger Animations and Feedback
+                                vibrateDevice()
+                                
+                                // Broadcast ANIMATION to Everyone in Room
+                                try {
+                                    val animJson = org.json.JSONObject().apply {
+                                        put("type", "cr_gift_anim")
+                                        put("gift_url", g.image)
+                                        put("gift_name", g.name)
+                                        put("sender_name", localName)
+                                        put("count", count)
+                                        val rArray = org.json.JSONArray()
+                                        rIds.forEach { rArray.put(it) }
+                                        put("receiver_ids", rArray)
+                                    }
+                                    sugunaClient.publishData(animJson.toString())
+                                } catch (e: Exception) {}
+
+                                // Trigger Local Animation for Self
+                                rIds.forEach { rid ->
+                                    startActualAnimation(g.image, rid, findViewById(R.id.animationOverlay))
+                                }
+                            } else {
+                                Toast.makeText(this@SugunaChatRoomActivity, "Error: ${task.exception?.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    
+                    // 3. Chat Message (SDK internal sync)
+                    val msg = if (rIds.size > 1) "Sent $count x ${g.name} to ${rIds.size} users" else "Sent $count x ${g.name}"
+                    com.suguna.rtc.utils.SocketManager.crChat(this@SugunaChatRoomActivity.intent.getStringExtra("ROOM_ID") ?: "", localUserId, localName, localImage, msg)
+                }
+        }
+        sheet.show(supportFragmentManager, "QuickGift")
+    }
+
     private fun setupMessageSender() {
         val etMessage = findViewById<EditText>(R.id.etMessage)
         val btnSend = findViewById<android.widget.ImageButton>(R.id.btnSendMessage)
@@ -1184,6 +1401,7 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         val ivRoomOwner = findViewById<com.google.android.material.imageview.ShapeableImageView>(R.id.ivRoomOwner)
         val host = listParticipants.find { it.id == roomOwnerId }
         if (host != null && !host.image.isNullOrEmpty()) {
+             roomOwnerImage = host.image
              com.bumptech.glide.Glide.with(this).load(host.image).into(ivRoomOwner)
         }
     }
@@ -1958,9 +2176,9 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
 
     override fun onResume() {
         super.onResume()
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            registerReceiver(callStatusReceiver, android.content.IntentFilter("com.suguna.rtc.ACTION_CALL_SUCCESS"), android.content.Context.RECEIVER_EXPORTED)
-            registerReceiver(callStatusReceiver, android.content.IntentFilter("com.suguna.rtc.ACTION_CALL_FAILED"), android.content.Context.RECEIVER_EXPORTED)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.registerReceiver(this, callStatusReceiver, android.content.IntentFilter("com.suguna.rtc.ACTION_CALL_SUCCESS"), ContextCompat.RECEIVER_NOT_EXPORTED)
+            ContextCompat.registerReceiver(this, callStatusReceiver, android.content.IntentFilter("com.suguna.rtc.ACTION_CALL_FAILED"), ContextCompat.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(callStatusReceiver, android.content.IntentFilter("com.suguna.rtc.ACTION_CALL_SUCCESS"))
             registerReceiver(callStatusReceiver, android.content.IntentFilter("com.suguna.rtc.ACTION_CALL_FAILED"))
@@ -2123,24 +2341,8 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
     }
 
     private var animationOverlay: android.widget.FrameLayout? = null
-    private val giftQueue: java.util.Queue<GiftTask> = java.util.LinkedList()
-    private var isGiftAnimating = false
-
-    private fun processNextGift() {
-        if (isGiftAnimating || giftQueue.isEmpty()) return
-        
-        isGiftAnimating = true
-        val task = giftQueue.poll() ?: return
-        
-        val rootView = findViewById<android.view.ViewGroup>(android.R.id.content)
-        if (rootView == null) {
-            isGiftAnimating = false
-            return
-        }
-
-        // DIRECTLY START ANIMATION (Since URLs are HTTPS as per latest logs)
-        startActualAnimation(task.giftUrl, task.receiverId, rootView)
-    }
+    // Simultaneous animation implementation (No queue)
+    private fun processNextGift() { /* No longer used */ }
 
     private fun startActualAnimation(giftUrl: String, receiverId: String, rootView: android.view.ViewGroup) {
         val urlLower = giftUrl.lowercase()
@@ -2162,8 +2364,6 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
                 runMovementAnimation(lottieView, receiverId, rootView)
             }.addFailureListener { e: Throwable ->
                 Log.e("SugunaGift", "Lottie Load Failed: ${e.message}")
-                isGiftAnimating = false
-                processNextGift()
             }
         } else {
             val imageView = ImageView(context).apply {
@@ -2193,68 +2393,92 @@ class SugunaChatRoomActivity : AppCompatActivity(), ChatRoomActions {
         giftView.x = (screenWidth / 2) - 250
         giftView.y = screenHeight - 850
 
+        // Phase 1: Appear and Scale at Bottom
         giftView.animate()
             .alpha(1f)
-            .scaleX(1.3f)
-            .scaleY(1.3f)
-            .setDuration(1200)
+            .scaleX(1.5f)
+            .scaleY(1.5f)
+            .setDuration(1000)
             .withEndAction {
-                val receiverView = getUserView(receiverId) ?: findViewById<View>(R.id.ivRoomOwner)
-                val targetPos = IntArray(2)
-                receiverView.getLocationInWindow(targetPos)
-                
-                val endX = targetPos[0].toFloat() + (receiverView.width / 2) - 250
-                val endY = targetPos[1].toFloat() + (receiverView.height / 2) - 250
+                // Phase 2: Wait at bottom for 3 seconds as requested
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (isFinishing || isDestroyed) return@postDelayed
+                    
+                    val receiverView = getUserView(receiverId) ?: findViewById<View>(R.id.ivRoomOwner)
+                    val targetPos = IntArray(2)
+                    receiverView.getLocationInWindow(targetPos)
+                    
+                    val rootPos = IntArray(2)
+                    rootView.getLocationInWindow(rootPos)
+                    
+                    val endX = (targetPos[0] - rootPos[0]).toFloat() + (receiverView.width / 2) - 250f
+                    val endY = (targetPos[1] - rootPos[1]).toFloat() + (receiverView.height / 2) - 250f
 
-                // PREMIMUM BEZIER CURVE IMPLEMENTATION
-                val path = android.graphics.Path()
-                path.moveTo(giftView.x, giftView.y)
-                
-                // Curve calculation: control point is above the midpoint to create an arc
-                val controlX = (giftView.x + endX) / 2
-                val controlY = java.lang.Math.min(giftView.y, endY) - 500 // Height of the arc
-                path.quadTo(controlX, controlY, endX, endY)
+                    // Phase 3: Move to Seat
+                    val path = android.graphics.Path()
+                    path.moveTo(giftView.x, giftView.y)
+                    
+                    val controlX = (giftView.x + endX) / 2
+                    val controlY = java.lang.Math.min(giftView.y, endY) - 500 
+                    path.quadTo(controlX, controlY, endX, endY)
 
-                val animator = android.animation.ObjectAnimator.ofFloat(giftView, View.X, View.Y, path)
-                animator.duration = 1800
-                
-                // NO mid-flight alpha/scale hide. Stay visible until seat.
-                giftView.animate()
-                    .scaleX(0.3f) // LARGER END SCALE
-                    .scaleY(0.3f)
-                    .alpha(1f) // STAY FULLY VISIBLE
-                    .setDuration(1800)
-                    .start()
+                    val animator = android.animation.ObjectAnimator.ofFloat(giftView, View.X, View.Y, path)
+                    animator.duration = 1800
+                    
+                    giftView.animate()
+                        .scaleX(0.3f) 
+                        .scaleY(0.3f)
+                        .alpha(1f) 
+                        .setDuration(1800)
+                        .start()
 
-                animator.addListener(object : android.animation.AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: android.animation.Animator) {
-                        giftView.animate().alpha(0f).setDuration(200).withEndAction {
-                            rootView.removeView(giftView)
-                            isGiftAnimating = false
-                            processNextGift()
-                        }.start()
-                    }
-                })
-                animator.start()
+                    animator.addListener(object : android.animation.AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: android.animation.Animator) {
+                            giftView.animate().alpha(0f).setDuration(200).withEndAction {
+                                rootView.removeView(giftView)
+                            }.start()
+                        }
+                    })
+                    animator.start()
+                }, 1500)
             }
             .start()
     }
 
     private fun getUserView(userId: String): View? {
+        val rv = findViewById<RecyclerView>(R.id.rvSeats) ?: return null
+        val lm = rv.layoutManager as? GridLayoutManager ?: return null
+        
+        // 1. Prioritize searching in the Seats Grid (includes Host at pos 0)
+        for (i in 0 until seatAdapter.itemCount) {
+             val seatId = seatAdapter.getSeatAt(i)?.id ?: ""
+             if (seatId == userId) {
+                 val view = lm.findViewByPosition(i)
+                 if (view != null) {
+                     val profileImg = view.findViewById<View>(R.id.ivParticipantProfile)
+                     if (profileImg != null) return profileImg
+                     return view
+                 }
+             }
+        }
+
+        // 2. Fallback for Host to Room Header image if seat view is not found/off-screen
         if (userId == roomOwnerId) {
             return findViewById(R.id.ivRoomOwner)
         }
         
-        val rv = findViewById<RecyclerView>(R.id.rvSeats) ?: return null
-        val lm = rv.layoutManager as? GridLayoutManager ?: return null
-        
-        for (i in 0 until seatAdapter.itemCount) {
-             val seatId = seatAdapter.getSeatAt(i)?.id ?: ""
-             if (seatId == userId) {
-                 return lm.findViewByPosition(i)
-             }
-        }
         return null
+    }
+
+    private fun vibrateDevice() {
+        val vibrator = getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        vibrator?.let {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                it.vibrate(android.os.VibrationEffect.createOneShot(50, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                it.vibrate(50)
+            }
+        }
     }
 
     private fun playRemoteMusicForAudience(url: String, startPosition: Int = 0) {

@@ -21,6 +21,14 @@ data class ChatMessage(
     val timestamp: String
 )
 
+data class GiftModel(
+    val id: String = "",
+    val name: String = "",
+    val image: String = "",
+    val price: Int = 0,
+    val type: String = "Static"
+)
+
 data class ReactionModel(
     val id: String = "",
     val name: String = "",
